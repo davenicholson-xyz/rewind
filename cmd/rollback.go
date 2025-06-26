@@ -101,11 +101,12 @@ func listAllVersionedFiles(dbm *app.DatabaseManager) error {
 		return fmt.Errorf("Could not retrieve file list from db: %w", err)
 	}
 
-	// TODO: Implement query to get all unique file paths from versions table
-	// Query: SELECT DISTINCT file_path FROM versions ORDER BY file_path
-
 	fmt.Println("📁 Files with available versions:")
-	fmt.Printf("%+v", versionedFiles)
+	// fmt.Printf("%+v", versionedFiles)
+
+	for _, ver := range versionedFiles {
+		fmt.Printf("%+v\n", ver)
+	}
 
 	return nil
 }
@@ -133,7 +134,7 @@ func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string)
 
 // performRollback restores a file to a specific version
 func performRollback(dbm *app.DatabaseManager, filePath string, version int, rootDir string) error {
-	app.Logger.WithFields(map[string]interface{}{
+	app.Logger.WithFields(map[string]any{
 		"filePath": filePath,
 		"version":  version,
 	}).Info("Performing rollback")
