@@ -47,16 +47,21 @@ func NewWatchManager(rootDir string) (*WatchManager, error) {
 	}
 	app.Logger.WithField("count", len(watchDirs)).Info("Discovered watch directories")
 
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		app.Logger.WithField("error", err).Error("Failed to create fsnotify watcher")
+		return nil, fmt.Errorf("failed to create fsnotify watcher: %w", err)
+	}
+
 	dbm, err := app.NewDatabaseManager(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database manager: %w", err)
 	}
 
-	// Create fsnotify watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		app.Logger.WithField("error", err).Error("Failed to create fsnotify watcher")
-		return nil, fmt.Errorf("failed to create fsnotify watcher: %w", err)
+	if err := dbm.Connect(); err != nil {
+		watcher.Close()
+		dbm.Close()
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,6 +109,12 @@ func (wm *WatchManager) Stop() error {
 		app.Logger.WithField("error", err).Error("Error closing fsnotify watcher")
 	}
 
+	if wm.dbm != nil {
+		if err := wm.dbm.Close(); err != nil {
+			app.Logger.WithField("error", err).Error("Error closing database manager")
+		}
+	}
+
 	// Wait for all goroutines to finish
 	wm.wg.Wait()
 
@@ -140,15 +151,12 @@ func (wm *WatchManager) processEvents() {
 
 func (wm *WatchManager) handleEvent(event fsnotify.Event) {
 
-	fmt.Println("name: " + event.Name)
 	// Get relative path for ignore checking
 	relPath, err := filepath.Rel(wm.RootDirectory, event.Name)
 	if err != nil {
 		app.Logger.WithField("path", event.Name).WithField("error", err).Warn("Failed to get relative path for event")
 		relPath = event.Name
 	}
-	fmt.Println(relPath)
-
 	// Check if the file/directory should be ignored
 	fileName := filepath.Base(event.Name)
 	if wm.shouldIgnoreEvent(relPath, fileName) {
@@ -180,7 +188,7 @@ func (wm *WatchManager) handleEvent(event fsnotify.Event) {
 }
 
 func (wm *WatchManager) handleCreate(path string) {
-	// Check if the created item is a directory
+
 	info, err := os.Stat(path)
 	if err != nil {
 		app.Logger.WithField("path", path).WithField("error", err).Debug("Could not stat created item")
@@ -209,6 +217,7 @@ func (wm *WatchManager) handleCreate(path string) {
 			wm.Monitored = append(wm.Monitored, path)
 		}
 	}
+
 }
 
 func (wm *WatchManager) handleRemove(path string) {
@@ -230,11 +239,11 @@ func (wm *WatchManager) shouldIgnoreEvent(relPath, fileName string) bool {
 func (wm *WatchManager) PerformInitialScan() error {
 	app.Logger.Info("Starting initial file system scan")
 
-	// Connect to database
-	if err := wm.dbm.Connect(); err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-	defer wm.dbm.Close()
+	// // Connect to database
+	// if err := wm.dbm.Connect(); err != nil {
+	// 	return fmt.Errorf("failed to connect to database: %w", err)
+	// }
+	// defer wm.dbm.Close()
 
 	var totalFiles int
 	var newFiles int
@@ -304,8 +313,11 @@ func (wm *WatchManager) PerformInitialScan() error {
 	return nil
 }
 
-// processFileForScan processes a single file during the initial scan
 func (wm *WatchManager) processFileForScan(filePath, relPath string) (string, error) {
+
+	fmt.Println("PROCESSING FILE FOR SCAN")
+	fmt.Println(filePath)
+	fmt.Println(relPath)
 
 	// Get file info
 	fileInfo, err := os.Stat(filePath)
@@ -313,20 +325,20 @@ func (wm *WatchManager) processFileForScan(filePath, relPath string) (string, er
 		return "", fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	// Calculate current file hash
 	currentHash, err := app.CalculateFileHash(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to calculate file hash: %w", err)
 	}
+	fmt.Println("CURRENT HASH: " + currentHash)
 
-	// Check if file exists in database
 	latestVersion, err := wm.dbm.GetLatestFileVersion(filePath)
 	if err != nil {
+		fmt.Println(err)
 		return "", fmt.Errorf("failed to get latest file version: %w", err)
 	}
+	fmt.Printf("%+v\n", latestVersion)
 
 	if latestVersion == nil {
-		// File doesn't exist in database - add it
 		app.Logger.WithField("path", relPath).Info("New file found during scan")
 
 		if err := wm.addFileToDatabase(filePath, relPath, currentHash, fileInfo); err != nil {
