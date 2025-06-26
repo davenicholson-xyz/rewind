@@ -235,3 +235,32 @@ func (dm *DatabaseManager) CreateStoragePath(filePath string, versionNumber int)
 
 	return filepath.Join(fmt.Sprintf("%s/v%d_%s", filename, versionNumber, timestamp))
 }
+
+func (dm *DatabaseManager) GetAllVersionedFiles() ([]string, error) {
+	query := `
+	SELECT DISTINCT file_path 
+	FROM versions 
+	ORDER BY file_path
+	`
+
+	rows, err := dm.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query versioned files: %w", err)
+	}
+	defer rows.Close()
+
+	var filePaths []string
+	for rows.Next() {
+		var filePath string
+		if err := rows.Scan(&filePath); err != nil {
+			return nil, fmt.Errorf("failed to scan file path: %w", err)
+		}
+		filePaths = append(filePaths, filePath)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return filePaths, nil
+}

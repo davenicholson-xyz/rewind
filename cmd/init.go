@@ -72,6 +72,8 @@ func runInit(cmd *cobra.Command, args []string) {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	runWatcher()
 }
 
 func determineTargetDirectory(args []string) (string, error) {
