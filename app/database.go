@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -223,17 +224,36 @@ func CalculateFileHash(filePath string) (string, error) {
 
 // CreateStoragePath creates a storage path for a file version
 func (dm *DatabaseManager) CreateStoragePath(filePath string, versionNumber int) string {
+
 	relPath, err := filepath.Rel(dm.rootDir, filePath)
 	if err != nil {
 		relPath = filePath
 	}
 
-	filename := filepath.Base(relPath)
+	// Remove any leading "./" or "\" from the relative path
+	relPath = filepath.Clean(relPath)
+	if strings.HasPrefix(relPath, "./") {
+		relPath = relPath[2:]
+	}
 
 	now := time.Now()
 	timestamp := now.Format("20060102_150405")
 
-	return filepath.Join(fmt.Sprintf("%s/v%d_%s", filename, versionNumber, timestamp))
+	// Create a directory structure that mirrors the original file structure
+	// For example: "example/file.txt" becomes "example/file.txt/v1_timestamp"
+	return filepath.Join(relPath, fmt.Sprintf("v%d_%s", versionNumber, timestamp))
+
+	// relPath, err := filepath.Rel(dm.rootDir, filePath)
+	// if err != nil {
+	// 	relPath = filePath
+	// }
+	//
+	// filename := filepath.Base(relPath)
+	//
+	// now := time.Now()
+	// timestamp := now.Format("20060102_150405")
+	//
+	// return filepath.Join(fmt.Sprintf("%s/v%d_%s", filename, versionNumber, timestamp))
 }
 
 func (dm *DatabaseManager) GetAllVersionedFiles() ([]string, error) {

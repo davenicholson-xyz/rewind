@@ -365,7 +365,6 @@ func (wm *WatchManager) processFileForScan(filePath, relPath string) (string, er
 
 // addFileToDatabase adds a file to the database with proper versioning
 func (wm *WatchManager) addFileToDatabase(filePath, relPath, fileHash string, fileInfo os.FileInfo) error {
-	// Get next version number
 	versionNumber, err := wm.dbm.GetNextVersionNumber(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to get next version number: %w", err)
@@ -375,7 +374,7 @@ func (wm *WatchManager) addFileToDatabase(filePath, relPath, fileHash string, fi
 	storagePath := wm.dbm.CreateStoragePath(filePath, versionNumber)
 	fullStoragePath := filepath.Join(wm.RootDirectory, ".rewind", "versions", storagePath)
 
-	// Create storage directory if it doesn't exist
+	// Create storage directory if it doesn't exist (this now creates the full directory structure)
 	storageDir := filepath.Dir(fullStoragePath)
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
@@ -398,6 +397,7 @@ func (wm *WatchManager) addFileToDatabase(filePath, relPath, fileHash string, fi
 
 	// Add to database
 	if err := wm.dbm.AddFileVersion(fileVersion); err != nil {
+		// Clean up the file if database insertion fails
 		os.Remove(fullStoragePath)
 		return fmt.Errorf("failed to add file version to database: %w", err)
 	}
