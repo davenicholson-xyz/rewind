@@ -172,8 +172,14 @@ func (wm *WatchManager) handleEvent(event fsnotify.Event) {
 		logger.Info("File/directory created")
 		wm.handleCreate(event.Name)
 	case event.Has(fsnotify.Write):
+
 		logger.Info("File modified")
+
 		wm.processFileForScan(event.Name, relPath)
+		if err != nil {
+			app.Logger.WithField("path", relPath).WithField("error", err).Error("Failed to process file during scan")
+		}
+
 	case event.Has(fsnotify.Remove):
 		logger.Info("File/directory removed")
 		wm.handleRemove(event.Name)
@@ -239,12 +245,6 @@ func (wm *WatchManager) shouldIgnoreEvent(relPath, fileName string) bool {
 func (wm *WatchManager) PerformInitialScan() error {
 	app.Logger.Info("Starting initial file system scan")
 
-	// // Connect to database
-	// if err := wm.dbm.Connect(); err != nil {
-	// 	return fmt.Errorf("failed to connect to database: %w", err)
-	// }
-	// defer wm.dbm.Close()
-
 	var totalFiles int
 	var newFiles int
 	var changedFiles int
@@ -260,16 +260,21 @@ func (wm *WatchManager) PerformInitialScan() error {
 				return nil // Continue with other files
 			}
 
-			// Skip directories
-			if d.IsDir() {
-				return nil
-			}
-
 			// Check if file should be ignored
 			relPath, err := filepath.Rel(wm.RootDirectory, path)
 			if err != nil {
 				app.Logger.WithField("path", path).WithField("error", err).Warn("Failed to get relative path")
 				relPath = path
+			}
+
+			if d.IsDir() && relPath != "." && wm.shouldIgnoreEvent(relPath, d.Name()) {
+				app.Logger.WithField("path", relPath).Debug("Skipping ignored directory and all its contents during scan")
+				return filepath.SkipDir
+			}
+
+			// Skip directories
+			if d.IsDir() {
+				return nil
 			}
 
 			if wm.shouldIgnoreEvent(relPath, d.Name()) {
@@ -315,10 +320,6 @@ func (wm *WatchManager) PerformInitialScan() error {
 
 func (wm *WatchManager) processFileForScan(filePath, relPath string) (string, error) {
 
-	fmt.Println("PROCESSING FILE FOR SCAN")
-	fmt.Println(filePath)
-	fmt.Println(relPath)
-
 	// Get file info
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
@@ -329,14 +330,11 @@ func (wm *WatchManager) processFileForScan(filePath, relPath string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("failed to calculate file hash: %w", err)
 	}
-	fmt.Println("CURRENT HASH: " + currentHash)
 
 	latestVersion, err := wm.dbm.GetLatestFileVersion(filePath)
 	if err != nil {
-		fmt.Println(err)
 		return "", fmt.Errorf("failed to get latest file version: %w", err)
 	}
-	fmt.Printf("%+v\n", latestVersion)
 
 	if latestVersion == nil {
 		app.Logger.WithField("path", relPath).Info("New file found during scan")
@@ -602,14 +600,14 @@ func discoverWatchDirectories(rootDir string, ignorePatterns []string) ([]string
 			return err
 		}
 
-		if !d.IsDir() {
-			return nil
-		}
-
 		relPath, err := filepath.Rel(rootDir, path)
 		if err != nil {
 			app.Logger.WithField("path", path).WithField("rootDir", rootDir).WithField("error", err).Error("Error getting relative path")
 			return err
+		}
+
+		if !d.IsDir() {
+			return nil
 		}
 
 		if shouldIgnore(relPath, d.Name(), ignorePatterns) {
