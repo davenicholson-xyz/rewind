@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/davenicholson-xyz/rewind/app"
 	"github.com/fsnotify/fsnotify"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -213,6 +215,214 @@ func (wm *WatchManager) shouldIgnoreEvent(relPath, fileName string) bool {
 	return shouldIgnore(relPath, fileName, wm.Ignored)
 }
 
+// PerformInitialScan scans all watched directories and processes files
+func (wm *WatchManager) PerformInitialScan() error {
+	app.Logger.Info("Starting initial file system scan")
+
+	// Create database manager
+	dbm, err := app.NewDatabaseManager(wm.RootDirectory)
+	if err != nil {
+		return fmt.Errorf("failed to create database manager: %w", err)
+	}
+
+	// Connect to database
+	if err := dbm.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer dbm.Close()
+
+	var totalFiles int
+	var newFiles int
+	var changedFiles int
+	var unchangedFiles int
+
+	// Scan each monitored directory
+	for _, dir := range wm.Monitored {
+		app.Logger.WithField("directory", dir).Debug("Scanning directory")
+
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				app.Logger.WithField("path", path).WithField("error", err).Warn("Error accessing file during scan")
+				return nil // Continue with other files
+			}
+
+			// Skip directories
+			if d.IsDir() {
+				return nil
+			}
+
+			// Check if file should be ignored
+			relPath, err := filepath.Rel(wm.RootDirectory, path)
+			if err != nil {
+				app.Logger.WithField("path", path).WithField("error", err).Warn("Failed to get relative path")
+				relPath = path
+			}
+
+			if wm.shouldIgnoreEvent(relPath, d.Name()) {
+				app.Logger.WithField("path", relPath).Debug("Ignoring file during scan")
+				return nil
+			}
+
+			totalFiles++
+
+			// Process the file
+			action, err := wm.processFileForScan(dbm, path, relPath)
+			if err != nil {
+				app.Logger.WithField("path", path).WithField("error", err).Error("Failed to process file during scan")
+				return nil // Continue with other files
+			}
+
+			switch action {
+			case "new":
+				newFiles++
+			case "changed":
+				changedFiles++
+			case "unchanged":
+				unchangedFiles++
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			app.Logger.WithField("directory", dir).WithField("error", err).Error("Error walking directory during scan")
+		}
+	}
+
+	app.Logger.WithFields(logrus.Fields{
+		"totalFiles":     totalFiles,
+		"newFiles":       newFiles,
+		"changedFiles":   changedFiles,
+		"unchangedFiles": unchangedFiles,
+	}).Info("Initial scan completed")
+
+	return nil
+}
+
+// processFileForScan processes a single file during the initial scan
+func (wm *WatchManager) processFileForScan(dbm *app.DatabaseManager, filePath, relPath string) (string, error) {
+	// Get file info
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	// Calculate current file hash
+	currentHash, err := app.CalculateFileHash(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to calculate file hash: %w", err)
+	}
+
+	// Check if file exists in database
+	latestVersion, err := dbm.GetLatestFileVersion(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get latest file version: %w", err)
+	}
+
+	if latestVersion == nil {
+		// File doesn't exist in database - add it
+		app.Logger.WithField("path", relPath).Info("New file found during scan")
+
+		if err := wm.addFileToDatabase(dbm, filePath, relPath, currentHash, fileInfo); err != nil {
+			return "", fmt.Errorf("failed to add new file to database: %w", err)
+		}
+
+		return "new", nil
+	}
+
+	// File exists in database - compare hashes
+	if latestVersion.FileHash == currentHash {
+		// File is unchanged
+		app.Logger.WithField("path", relPath).Debug("File unchanged since last version")
+		return "unchanged", nil
+	}
+
+	// File has changed - add new version
+	app.Logger.WithField("path", relPath).Info("File changed since last version")
+
+	if err := wm.addFileToDatabase(dbm, filePath, relPath, currentHash, fileInfo); err != nil {
+		return "", fmt.Errorf("failed to add changed file to database: %w", err)
+	}
+
+	return "changed", nil
+}
+
+// addFileToDatabase adds a file to the database with proper versioning
+func (wm *WatchManager) addFileToDatabase(dbm *app.DatabaseManager, filePath, relPath, fileHash string, fileInfo os.FileInfo) error {
+	// Get next version number
+	versionNumber, err := dbm.GetNextVersionNumber(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to get next version number: %w", err)
+	}
+
+	// Create storage path
+	storagePath := dbm.CreateStoragePath(filePath, versionNumber)
+	fullStoragePath := filepath.Join(wm.RootDirectory, ".rewind", "versions", storagePath)
+
+	// Create storage directory if it doesn't exist
+	storageDir := filepath.Dir(fullStoragePath)
+	fmt.Println(storageDir)
+	if err := os.MkdirAll(storageDir, 0755); err != nil {
+		return fmt.Errorf("failed to create storage directory: %w", err)
+	}
+
+	// Copy file to storage location
+	if err := wm.copyFile(filePath, fullStoragePath); err != nil {
+		return fmt.Errorf("failed to copy file to storage: %w", err)
+	}
+
+	// Create file version record
+	fileVersion := &app.FileVersion{
+		FilePath:      relPath,
+		VersionNumber: versionNumber,
+		Timestamp:     time.Now(),
+		FileHash:      fileHash,
+		FileSize:      fileInfo.Size(),
+		StoragePath:   storagePath,
+	}
+
+	// Add to database
+	if err := dbm.AddFileVersion(fileVersion); err != nil {
+		os.Remove(fullStoragePath)
+		return fmt.Errorf("failed to add file version to database: %w", err)
+	}
+
+	app.Logger.WithFields(logrus.Fields{
+		"path":        relPath,
+		"version":     versionNumber,
+		"size":        fileInfo.Size(),
+		"storagePath": storagePath,
+	}).Info("File version added to database")
+
+	return nil
+}
+
+// copyFile copies a file from src to dst
+func (wm *WatchManager) copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+
+	// Sync to ensure data is written to disk
+	if err := destFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync destination file: %w", err)
+	}
+
+	return nil
+}
+
 // watchCmd represents the watch command
 var watchCmd = &cobra.Command{
 	Use:   "watch",
@@ -261,6 +471,13 @@ func runWatcher() error {
 
 	app.Logger.WithField("monitoredDirs", len(wm.Monitored)).WithField("ignoredPatterns", len(wm.Ignored)).Info("WatchManager created successfully")
 	app.Logger.WithField("directories", wm.Monitored).Debug("Monitored directories")
+
+	fmt.Println("🔍 Performing initial file system scan...")
+	if err := wm.PerformInitialScan(); err != nil {
+		app.Logger.WithField("error", err).Error("Initial scan failed")
+		return fmt.Errorf("initial scan failed: %w", err)
+	}
+	fmt.Println("✅ Initial scan completed")
 
 	// Start watching
 	if err := wm.Start(); err != nil {

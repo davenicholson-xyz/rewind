@@ -1,8 +1,10 @@
 package app
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -122,4 +124,114 @@ func (dm *DatabaseManager) GetDatabasePath() string {
 func (dm *DatabaseManager) DatabaseExists() bool {
 	_, err := os.Stat(dm.dbPath)
 	return !os.IsNotExist(err)
+}
+
+// AddFileVersion adds a new file version to the database
+func (dm *DatabaseManager) AddFileVersion(fv *FileVersion) error {
+	query := `
+	INSERT INTO versions (file_path, version_number, timestamp, file_hash, file_size, storage_path)
+	VALUES (?, ?, ?, ?, ?, ?)
+	`
+
+	_, err := dm.db.Exec(query, fv.FilePath, fv.VersionNumber, fv.Timestamp.Format("2006-01-02 15:04:05"),
+		fv.FileHash, fv.FileSize, fv.StoragePath)
+
+	if err != nil {
+		return fmt.Errorf("failed to add file version: %w", err)
+	}
+
+	return nil
+}
+
+// GetLatestFileVersion retrieves the latest version of a file from the database
+func (dm *DatabaseManager) GetLatestFileVersion(filePath string) (*FileVersion, error) {
+	// Convert to relative path for consistent storage
+	relPath, err := filepath.Rel(dm.rootDir, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+
+	query := `
+	SELECT id, file_path, version_number, timestamp, file_hash, file_size, storage_path
+	FROM versions 
+	WHERE file_path = ?
+	ORDER BY version_number DESC
+	LIMIT 1
+	`
+
+	row := dm.db.QueryRow(query, relPath)
+
+	fv := &FileVersion{}
+	var timestampStr string
+
+	err = row.Scan(&fv.ID, &fv.FilePath, &fv.VersionNumber, &timestampStr,
+		&fv.FileHash, &fv.FileSize, &fv.StoragePath)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No version found
+		}
+		return nil, fmt.Errorf("failed to get latest file version: %w", err)
+	}
+
+	// Parse timestamp
+	fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+
+	return fv, nil
+}
+
+// GetNextVersionNumber returns the next version number for a file
+func (dm *DatabaseManager) GetNextVersionNumber(filePath string) (int, error) {
+	relPath, err := filepath.Rel(dm.rootDir, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+
+	query := `
+	SELECT COALESCE(MAX(version_number), 0) + 1
+	FROM versions 
+	WHERE file_path = ?
+	`
+
+	var nextVersion int
+	err = dm.db.QueryRow(query, relPath).Scan(&nextVersion)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get next version number: %w", err)
+	}
+
+	return nextVersion, nil
+}
+
+// CalculateFileHash calculates SHA256 hash of a file
+func CalculateFileHash(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", fmt.Errorf("failed to calculate hash: %w", err)
+	}
+
+	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+}
+
+// CreateStoragePath creates a storage path for a file version
+func (dm *DatabaseManager) CreateStoragePath(filePath string, versionNumber int) string {
+	relPath, err := filepath.Rel(dm.rootDir, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+
+	filename := filepath.Base(relPath)
+
+	now := time.Now()
+	timestamp := now.Format("20060102_150405")
+
+	return filepath.Join(fmt.Sprintf("%s/v%d_%s", filename, versionNumber, timestamp))
 }
