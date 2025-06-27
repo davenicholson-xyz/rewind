@@ -69,11 +69,13 @@ func runRollback(cmd *cobra.Command, args []string) {
 	// Handle different scenarios based on arguments
 	switch len(args) {
 	case 0:
+		fmt.Println("Select a file")
+		os.Exit(1)
 		// No file specified - list all files with versions
-		if err := listAllVersionedFiles(dbm); err != nil {
-			fmt.Printf("Error listing files: %v\n", err)
-			os.Exit(1)
-		}
+		// if err := listAllVersionedFiles(dbm); err != nil {
+		// 	fmt.Printf("Error listing files: %v\n", err)
+		// 	os.Exit(1)
+		// }
 	case 1:
 		// File specified
 		filePath := args[0]
@@ -97,22 +99,22 @@ func runRollback(cmd *cobra.Command, args []string) {
 }
 
 // listAllVersionedFiles lists all files that have versions in the database
-func listAllVersionedFiles(dbm *app.DatabaseManager) error {
-
-	files, err := dbm.GetAllLatestFiles()
-	if err != nil {
-		return err
-	}
-
-	if len(files) == 0 {
-		fmt.Println("No versioned files found.")
-		return nil
-	}
-
-	ui.FileSelector(files)
-
-	return nil
-}
+// func listAllVersionedFiles(dbm *app.DatabaseManager) error {
+//
+// 	files, err := dbm.GetAllLatestFiles()
+// 	if err != nil {
+// 		return err
+// 	}
+//
+// 	if len(files) == 0 {
+// 		fmt.Println("No versioned files found.")
+// 		return nil
+// 	}
+//
+// 	ui.FileSelector(files)
+//
+// 	return nil
+// }
 
 // listFileVersions shows all versions available for a specific file
 func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string) error {
