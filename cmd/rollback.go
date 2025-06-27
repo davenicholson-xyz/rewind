@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/davenicholson-xyz/rewind/app"
+	"github.com/davenicholson-xyz/rewind/ui"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -108,20 +109,7 @@ func listAllVersionedFiles(dbm *app.DatabaseManager) error {
 		return nil
 	}
 
-	// return nil
-	// app.Logger.Debug("Listing all versioned files")
-
-	// versionedFiles, err := dbm.GetAllVersionedFiles()
-	// if err != nil {
-	// 	return fmt.Errorf("Could not retrieve file list from db: %w", err)
-	// }
-	//
-	fmt.Println("📁 Files with available versions:")
-	// fmt.Printf("%+v", versionedFiles)
-
-	for _, ver := range files {
-		fmt.Printf("%+v\n", ver)
-	}
+	ui.FileSelector(files)
 
 	return nil
 }
@@ -130,19 +118,18 @@ func listAllVersionedFiles(dbm *app.DatabaseManager) error {
 func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string) error {
 	app.Logger.WithField("filePath", filePath).Debug("Listing versions for file")
 
-	// Convert to absolute path if relative
-	// absPath, err := filepath.Abs(filePath)
-	_, err := filepath.Abs(filePath)
+	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	// TODO: Implement query to get all versions for this file
-	// Query: SELECT version_number, timestamp, file_size, file_hash FROM versions
-	//        WHERE file_path = ? ORDER BY version_number DESC
+	fileVersions, err := dbm.GetFileVersions(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to get db entry: %w", err)
+	}
+	app.Logger.WithField("version count", len(fileVersions)).Info("Found file version in db")
 
-	fmt.Printf("📋 Versions for %s:\n", filePath)
-	fmt.Println("(Implementation needed: query database for file versions)")
+	ui.FileVersionSelector(fileVersions)
 
 	return nil
 }
@@ -179,6 +166,13 @@ func performRollback(dbm *app.DatabaseManager, filePath string, version int, roo
 		}
 		return fmt.Errorf("failed to access stored version file: %w", err)
 	}
+
+	// backupPath, err := createBackup(absPath)
+	// if err != nil {
+	// 	app.Logger.WithField("error", err).Warn("Failed to create backup, continuing with rollback")
+	// } else {
+	// 	app.Logger.WithField("backupPath", backupPath).Info("Created backup of current file")
+	// }
 
 	if err := copyStoredFileToOriginal(storedVersionPath, absPath); err != nil {
 		return fmt.Errorf("failed to restore file: %w", err)

@@ -285,8 +285,57 @@ func (dm *DatabaseManager) GetAllLatestFiles() ([]*FileVersion, error) {
 	return fileVersions, nil
 }
 
+func (dm *DatabaseManager) GetFileVersions(absPath string) ([]*FileVersion, error) {
+
+	relPath, err := filepath.Rel(dm.rootDir, absPath)
+	if err != nil {
+		relPath = absPath
+	}
+
+	relPath = filepath.Clean(relPath)
+	if strings.HasPrefix(relPath, "./") {
+		relPath = relPath[2:]
+	}
+
+	query := `
+	SELECT v.id, v.file_path, v.version_number, v.timestamp, v.file_hash, v.file_size, v.storage_path
+	FROM versions v
+	WHERE v.file_path = ?
+	ORDER BY v.version_number
+	`
+
+	rows, err := dm.db.Query(query, relPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query versioned files: %w", err)
+	}
+	defer rows.Close()
+
+	var fileVersions []*FileVersion
+	for rows.Next() {
+		fv := &FileVersion{}
+		var timestampStr string
+
+		err := rows.Scan(&fv.ID, &fv.FilePath, &fv.VersionNumber, &timestampStr, &fv.FileHash, &fv.FileSize, &fv.StoragePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan file version: %w", err)
+		}
+
+		fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
+		}
+
+		fileVersions = append(fileVersions, fv)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return fileVersions, nil
+}
+
 func (dm *DatabaseManager) GetFileVersion(absPath string, version int) (*FileVersion, error) {
-	// Convert to relative path for consistent storage
 	relPath, err := filepath.Rel(dm.rootDir, absPath)
 	if err != nil {
 		relPath = absPath
