@@ -24,17 +24,19 @@ If a file is specified without a version, shows all available versions for that 
 If a file and version are specified, restores the file to that version.
 
 Examples:
-  rewind rollback                    # List all files with versions
   rewind rollback myfile.txt         # Show versions for myfile.txt
+  rewind rollback myfile.txt -l      # List versions for myfile.txt as CSV
   rewind rollback myfile.txt -v 3    # Restore myfile.txt to version 3`,
 	Run: runRollback,
 }
 
 var versionFlag int
+var listFlag bool
 
 func init() {
 	rootCmd.AddCommand(rollbackCmd)
 	rollbackCmd.Flags().IntVarP(&versionFlag, "version", "v", 0, "Version to rollback to")
+	rollbackCmd.Flags().BoolVarP(&listFlag, "list", "l", false, "List file versions as CSV")
 }
 
 func runRollback(cmd *cobra.Command, args []string) {
@@ -69,18 +71,20 @@ func runRollback(cmd *cobra.Command, args []string) {
 	// Handle different scenarios based on arguments
 	switch len(args) {
 	case 0:
-		fmt.Println("Select a file")
+		fmt.Println("Error: Please specify a file")
 		os.Exit(1)
-		// No file specified - list all files with versions
-		// if err := listAllVersionedFiles(dbm); err != nil {
-		// 	fmt.Printf("Error listing files: %v\n", err)
-		// 	os.Exit(1)
-		// }
 	case 1:
 		// File specified
 		filePath := args[0]
-		if versionFlag == 0 {
-			// No version specified - show all versions for this file
+
+		if listFlag {
+			// List flag specified - output CSV format
+			if err := listFileVersionsCSV(dbm, filePath, cwd); err != nil {
+				fmt.Printf("Error listing file versions: %v\n", err)
+				os.Exit(1)
+			}
+		} else if versionFlag == 0 {
+			// No version specified - show interactive UI
 			if err := listFileVersions(dbm, filePath, cwd); err != nil {
 				fmt.Printf("Error listing file versions: %v\n", err)
 				os.Exit(1)
@@ -98,28 +102,44 @@ func runRollback(cmd *cobra.Command, args []string) {
 	}
 }
 
-// listAllVersionedFiles lists all files that have versions in the database
-// func listAllVersionedFiles(dbm *app.DatabaseManager) error {
-//
-// 	files, err := dbm.GetAllLatestFiles()
-// 	if err != nil {
-// 		return err
-// 	}
-//
-// 	if len(files) == 0 {
-// 		fmt.Println("No versioned files found.")
-// 		return nil
-// 	}
-//
-// 	ui.FileSelector(files)
-//
-// 	return nil
-// }
+// listFileVersionsCSV outputs file versions in CSV format
+func listFileVersionsCSV(dbm *app.DatabaseManager, filePath string, rootDir string) error {
+	app.Logger.WithField("filePath", filePath).Debug("Listing versions for file as CSV")
 
-// listFileVersions shows all versions available for a specific file
-// Update the listFileVersions function in cmd/rollback.go
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
 
-// listFileVersions shows all versions available for a specific file
+	fileVersions, err := dbm.GetFileVersions(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to get db entry: %w", err)
+	}
+
+	if len(fileVersions) == 0 {
+		fmt.Println("No versions found for file:", filePath)
+		return nil
+	}
+
+	app.Logger.WithField("version count", len(fileVersions)).Info("Found file versions in db")
+
+	// Print CSV header
+	// fmt.Println("version,timestamp,filehash,filesize,storagepath")
+
+	// Print each version as CSV
+	for _, fv := range fileVersions {
+		fmt.Printf("%d,%s,%s,%d,%s\n",
+			fv.VersionNumber,
+			fv.Timestamp.Format("2006-01-02T15:04:05Z07:00"), // ISO 8601 format
+			fv.FileHash,
+			fv.FileSize,
+			fv.StoragePath)
+	}
+
+	return nil
+}
+
+// listFileVersions shows interactive UI for file versions
 func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string) error {
 	app.Logger.WithField("filePath", filePath).Debug("Listing versions for file")
 
@@ -132,6 +152,12 @@ func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string)
 	if err != nil {
 		return fmt.Errorf("failed to get db entry: %w", err)
 	}
+
+	if len(fileVersions) == 0 {
+		fmt.Println("No versions found for file:", filePath)
+		return nil
+	}
+
 	app.Logger.WithField("version count", len(fileVersions)).Info("Found file version in db")
 
 	// Pass rootDir to the FileVersionSelector
@@ -140,7 +166,6 @@ func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string)
 	return nil
 }
 
-// performRollback restores a file to a specific version
 func performRollback(dbm *app.DatabaseManager, filePath string, version int, rootDir string) error {
 	app.Logger.WithFields(map[string]any{
 		"filePath": filePath,
@@ -156,6 +181,11 @@ func performRollback(dbm *app.DatabaseManager, filePath string, version int, roo
 	if err != nil {
 		return fmt.Errorf("failed to get db entry: %w", err)
 	}
+
+	if fileVersion == nil {
+		return fmt.Errorf("version %d not found for file %s", version, filePath)
+	}
+
 	app.Logger.WithFields(logrus.Fields{"id": fileVersion.ID, "filePath": fileVersion.FilePath}).Info("Found file version in db")
 
 	storedVersionPath := filepath.Join(rootDir, ".rewind", "versions", fileVersion.StoragePath)
@@ -173,6 +203,7 @@ func performRollback(dbm *app.DatabaseManager, filePath string, version int, roo
 		return fmt.Errorf("failed to access stored version file: %w", err)
 	}
 
+	// Create backup before rollback (optional - uncomment if desired)
 	// backupPath, err := createBackup(absPath)
 	// if err != nil {
 	// 	app.Logger.WithField("error", err).Warn("Failed to create backup, continuing with rollback")
@@ -191,7 +222,6 @@ func performRollback(dbm *app.DatabaseManager, filePath string, version int, roo
 	fmt.Printf("✅ Successfully rolled back %s to version %d\n", filePath, version)
 
 	return nil
-
 }
 
 func copyStoredFileToOriginal(storagePath, originalPath string) error {
