@@ -117,6 +117,9 @@ func runRollback(cmd *cobra.Command, args []string) {
 // }
 
 // listFileVersions shows all versions available for a specific file
+// Update the listFileVersions function in cmd/rollback.go
+
+// listFileVersions shows all versions available for a specific file
 func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string) error {
 	app.Logger.WithField("filePath", filePath).Debug("Listing versions for file")
 
@@ -131,7 +134,8 @@ func listFileVersions(dbm *app.DatabaseManager, filePath string, rootDir string)
 	}
 	app.Logger.WithField("version count", len(fileVersions)).Info("Found file version in db")
 
-	ui.FileVersionSelector(fileVersions)
+	// Pass rootDir to the FileVersionSelector
+	ui.FileVersionSelector(fileVersions, rootDir)
 
 	return nil
 }

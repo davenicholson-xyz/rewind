@@ -1,7 +1,11 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -13,12 +17,16 @@ import (
 
 // VersionSelectorModel holds the application state
 type VersionSelectorModel struct {
-	versions    []*app.FileVersion
-	cursor      int
-	selected    *app.FileVersion
-	showDetails bool
-	fileName    string
-	viewport    viewportState
+	versions     []*app.FileVersion
+	cursor       int
+	selected     *app.FileVersion
+	showDetails  bool
+	showDiff     bool
+	fileName     string
+	viewport     viewportState
+	diffLines    []string
+	diffViewport viewportState
+	rootDir      string
 }
 
 type viewportState struct {
@@ -66,10 +74,24 @@ var (
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Margin(1, 0, 0, 0)
+
+	// Diff styles
+	diffHeaderStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("33")).
+			Bold(true)
+
+	diffContainerStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("240")).
+				Padding(1).
+				Margin(1, 0)
+
+	diffLineStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
 )
 
 // NewVersionSelector creates a new version selector model
-func NewVersionSelector(versions []*app.FileVersion, fileName string) VersionSelectorModel {
+func NewVersionSelector(versions []*app.FileVersion, fileName, rootDir string) VersionSelectorModel {
 	// Sort versions by version number (descending - newest first)
 	sortedVersions := make([]*app.FileVersion, len(versions))
 	copy(sortedVersions, versions)
@@ -81,9 +103,14 @@ func NewVersionSelector(versions []*app.FileVersion, fileName string) VersionSel
 		versions:    sortedVersions,
 		cursor:      0,
 		fileName:    fileName,
+		rootDir:     rootDir,
 		showDetails: false,
+		showDiff:    false,
 		viewport: viewportState{
-			height: 20, // Default viewport height
+			height: 20,
+		},
+		diffViewport: viewportState{
+			height: 15,
 		},
 	}
 }
@@ -96,7 +123,12 @@ func (m VersionSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		// Adjust viewport height based on terminal size
-		m.viewport.height = msg.Height - 10 // Reserve space for title, help, and details
+		if m.showDiff {
+			m.viewport.height = (msg.Height - 12) / 2
+			m.diffViewport.height = (msg.Height - 12) / 2
+		} else {
+			m.viewport.height = msg.Height - 10
+		}
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -104,73 +136,197 @@ func (m VersionSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-				m.adjustViewport()
+			if m.showDiff {
+				if m.diffViewport.offset > 0 {
+					m.diffViewport.offset--
+				}
+			} else {
+				if m.cursor > 0 {
+					m.cursor--
+					m.adjustViewport()
+				}
 			}
 
 		case "down", "j":
-			if m.cursor < len(m.versions)-1 {
-				m.cursor++
-				m.adjustViewport()
+			if m.showDiff {
+				if m.diffViewport.offset < len(m.diffLines)-m.diffViewport.height {
+					m.diffViewport.offset++
+				}
+			} else {
+				if m.cursor < len(m.versions)-1 {
+					m.cursor++
+					m.adjustViewport()
+				}
+			}
+
+		case "left", "h":
+			if m.showDiff {
+				m.showDiff = false
+				m.viewport.height = 20
+			}
+
+		case "right", "l":
+			if !m.showDiff && len(m.versions) > 0 {
+				m.showDiff = true
+				m.generateDiff()
+				m.viewport.height = 10
+				m.diffViewport.height = 15
 			}
 
 		case "home", "g":
-			m.cursor = 0
-			m.viewport.offset = 0
+			if m.showDiff {
+				m.diffViewport.offset = 0
+			} else {
+				m.cursor = 0
+				m.viewport.offset = 0
+			}
 
 		case "end", "G":
-			m.cursor = len(m.versions) - 1
-			m.adjustViewport()
+			if m.showDiff {
+				if len(m.diffLines) > m.diffViewport.height {
+					m.diffViewport.offset = len(m.diffLines) - m.diffViewport.height
+				}
+			} else {
+				m.cursor = len(m.versions) - 1
+				m.adjustViewport()
+			}
 
 		case "pageup", "ctrl+u":
-			m.cursor -= m.viewport.height / 2
-			if m.cursor < 0 {
-				m.cursor = 0
+			if m.showDiff {
+				m.diffViewport.offset -= m.diffViewport.height / 2
+				if m.diffViewport.offset < 0 {
+					m.diffViewport.offset = 0
+				}
+			} else {
+				m.cursor -= m.viewport.height / 2
+				if m.cursor < 0 {
+					m.cursor = 0
+				}
+				m.adjustViewport()
 			}
-			m.adjustViewport()
 
 		case "pagedown", "ctrl+d":
-			m.cursor += m.viewport.height / 2
-			if m.cursor >= len(m.versions) {
-				m.cursor = len(m.versions) - 1
+			if m.showDiff {
+				m.diffViewport.offset += m.diffViewport.height / 2
+				if m.diffViewport.offset > len(m.diffLines)-m.diffViewport.height {
+					m.diffViewport.offset = len(m.diffLines) - m.diffViewport.height
+				}
+				if m.diffViewport.offset < 0 {
+					m.diffViewport.offset = 0
+				}
+			} else {
+				m.cursor += m.viewport.height / 2
+				if m.cursor >= len(m.versions) {
+					m.cursor = len(m.versions) - 1
+				}
+				m.adjustViewport()
 			}
-			m.adjustViewport()
 
 		case "enter", " ":
-			if len(m.versions) > 0 {
+			if len(m.versions) > 0 && !m.showDiff {
 				m.selected = m.versions[m.cursor]
 			}
 
 		case "tab", "i":
-			m.showDetails = !m.showDetails
+			if !m.showDiff {
+				m.showDetails = !m.showDetails
+			}
+
+		case "d":
+			if len(m.versions) > 0 {
+				m.showDiff = !m.showDiff
+				if m.showDiff {
+					m.generateDiff()
+					m.viewport.height = 10
+					m.diffViewport.height = 15
+				} else {
+					m.viewport.height = 20
+				}
+			}
 
 		case "s":
-			// Sort toggle between newest first and oldest first
-			if len(m.versions) > 1 {
-				// Check current sort order
-				newestFirst := m.versions[0].VersionNumber > m.versions[len(m.versions)-1].VersionNumber
+			if !m.showDiff {
+				if len(m.versions) > 1 {
+					newestFirst := m.versions[0].VersionNumber > m.versions[len(m.versions)-1].VersionNumber
 
-				if newestFirst {
-					// Sort oldest first
-					sort.SliceStable(m.versions, func(i, j int) bool {
-						return m.versions[i].VersionNumber < m.versions[j].VersionNumber
-					})
-				} else {
-					// Sort newest first
-					sort.SliceStable(m.versions, func(i, j int) bool {
-						return m.versions[i].VersionNumber > m.versions[j].VersionNumber
-					})
+					if newestFirst {
+						sort.SliceStable(m.versions, func(i, j int) bool {
+							return m.versions[i].VersionNumber < m.versions[j].VersionNumber
+						})
+					} else {
+						sort.SliceStable(m.versions, func(i, j int) bool {
+							return m.versions[i].VersionNumber > m.versions[j].VersionNumber
+						})
+					}
+
+					m.cursor = 0
+					m.viewport.offset = 0
 				}
-
-				// Reset cursor position
-				m.cursor = 0
-				m.viewport.offset = 0
 			}
 		}
 	}
 
 	return m, nil
+}
+
+// generateDiff runs the Unix diff command and captures its output
+func (m *VersionSelectorModel) generateDiff() {
+	if len(m.versions) == 0 {
+		return
+	}
+
+	currentVersion := m.versions[m.cursor]
+
+	// Paths for current file and stored version
+	currentFilePath := filepath.Join(m.rootDir, currentVersion.FilePath)
+	storedVersionPath := filepath.Join(m.rootDir, ".rewind", "versions", currentVersion.StoragePath)
+
+	// Check if files exist
+	if _, err := os.Stat(currentFilePath); os.IsNotExist(err) {
+		m.diffLines = []string{fmt.Sprintf("Error: Current file not found: %s", currentFilePath)}
+		return
+	}
+
+	if _, err := os.Stat(storedVersionPath); os.IsNotExist(err) {
+		m.diffLines = []string{fmt.Sprintf("Error: Stored version not found: %s", storedVersionPath)}
+		return
+	}
+
+	// Run diff command with unified format, colors, and labels
+	cmd := exec.Command("diff", "-u", "--color=always",
+		"--label", fmt.Sprintf("Version %d", currentVersion.VersionNumber),
+		"--label", "Current",
+		storedVersionPath, currentFilePath)
+
+	output, err := cmd.Output()
+
+	// diff returns exit code 1 when files differ, which is expected
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			// Exit code 1 means files differ (normal case)
+			// Exit code 2 means error occurred
+			if exitError.ExitCode() == 2 {
+				m.diffLines = []string{fmt.Sprintf("Error running diff: %v", err)}
+				return
+			}
+		} else {
+			m.diffLines = []string{fmt.Sprintf("Error running diff: %v", err)}
+			return
+		}
+	}
+
+	// Parse output into lines
+	if len(output) == 0 {
+		m.diffLines = []string{"No differences found"}
+	} else {
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
+		m.diffLines = []string{}
+		for scanner.Scan() {
+			m.diffLines = append(m.diffLines, scanner.Text())
+		}
+	}
+
+	m.diffViewport.offset = 0
 }
 
 // adjustViewport ensures the cursor is visible within the viewport
@@ -254,8 +410,47 @@ func (m VersionSelectorModel) View() string {
 
 	// Title
 	title := fmt.Sprintf("Version Selector - %s", m.fileName)
+	if m.showDiff {
+		title += " (Diff Mode)"
+	}
 	b.WriteString(titleStyle.Render(title))
 	b.WriteString("\n")
+
+	if m.showDiff {
+		// Split view: versions list on top, diff on bottom
+		b.WriteString(m.renderVersionList())
+		b.WriteString("\n")
+		b.WriteString(m.renderDiff())
+	} else {
+		// Full version list view
+		b.WriteString(m.renderVersionList())
+
+		if m.showDetails && len(m.versions) > 0 {
+			b.WriteString(m.renderDetails())
+		}
+	}
+
+	// Selection info
+	if m.selected != nil {
+		selectedInfo := fmt.Sprintf("✓ Selected: Version %d (ID: %d)", m.selected.VersionNumber, m.selected.ID)
+		b.WriteString(selectedVersionStyle.Render(selectedInfo))
+		b.WriteString("\n")
+	}
+
+	// Help text
+	var help string
+	if m.showDiff {
+		help = "Diff Mode: ↑/↓,j/k=scroll diff, h=back to list, l/d=toggle diff, g/G=top/bottom, PgUp/PgDn=page, q/Esc=quit"
+	} else {
+		help = "Navigation: ↑/↓,j/k=move, Enter/Space=select, Tab/i=details, s=sort, d/l=diff, g/G=top/bottom, PgUp/PgDn=scroll, q/Esc=quit"
+	}
+	b.WriteString(helpStyle.Render(help))
+
+	return b.String()
+}
+
+func (m VersionSelectorModel) renderVersionList() string {
+	var b strings.Builder
 
 	// Header
 	header := fmt.Sprintf("%-8s %-12s %-15s %-12s %s", "Version", "Size", "Age", "Hash", "Storage Path")
@@ -288,7 +483,6 @@ func (m VersionSelectorModel) View() string {
 		if actualIndex == m.cursor {
 			line = selectedVersionStyle.Render(line)
 		} else if actualIndex == 0 && m.versions[0].VersionNumber > m.versions[len(m.versions)-1].VersionNumber {
-			// Highlight the current/latest version (when sorted newest first)
 			line = currentVersionStyle.Render(line)
 		} else {
 			line = versionStyle.Render(line)
@@ -309,45 +503,76 @@ func (m VersionSelectorModel) View() string {
 		b.WriteString("\n")
 	}
 
-	if m.showDetails && len(m.versions) > 0 {
+	return b.String()
+}
+
+func (m VersionSelectorModel) renderDiff() string {
+	var b strings.Builder
+
+	diffTitle := "Diff View"
+	if len(m.versions) > 0 {
 		currentVersion := m.versions[m.cursor]
-		details := fmt.Sprintf(
-			"Detailed Information:\n"+
-				"ID: %d\n"+
-				"File Path: %s\n"+
-				"Version: %d\n"+
-				"Timestamp: %s\n"+
-				"File Hash: %s\n"+
-				"File Size: %s (%d bytes)\n"+
-				"Storage Path: %s",
-			currentVersion.ID,
-			currentVersion.FilePath,
-			currentVersion.VersionNumber,
-			currentVersion.Timestamp.Format("2006-01-02 15:04:05 MST"),
-			currentVersion.FileHash,
-			formatFileSize(currentVersion.FileSize),
-			currentVersion.FileSize,
-			currentVersion.StoragePath,
-		)
-		b.WriteString(detailsStyle.Render(details))
-		b.WriteString("\n")
+		diffTitle = fmt.Sprintf("Diff: Version %d vs Current", currentVersion.VersionNumber)
+	}
+	b.WriteString(diffHeaderStyle.Render(diffTitle))
+	b.WriteString("\n")
+
+	if len(m.diffLines) == 0 {
+		b.WriteString(diffContainerStyle.Render("No diff available"))
+		return b.String()
 	}
 
-	// Selection info
-	if m.selected != nil {
-		selectedInfo := fmt.Sprintf("✓ Selected: Version %d (ID: %d)", m.selected.VersionNumber, m.selected.ID)
-		b.WriteString(selectedVersionStyle.Render(selectedInfo))
-		b.WriteString("\n")
+	// Show diff lines with viewport
+	visibleLines := m.diffLines[m.diffViewport.offset:]
+	if len(visibleLines) > m.diffViewport.height {
+		visibleLines = visibleLines[:m.diffViewport.height]
 	}
 
-	// Help text
-	help := "Navigation: ↑/↓,j/k=move, Enter/Space=select, Tab/i=details, s=sort, g/G=top/bottom, PgUp/PgDn=scroll, q/Esc=quit"
-	b.WriteString(helpStyle.Render(help))
+	var diffContent strings.Builder
+	for _, line := range visibleLines {
+		diffContent.WriteString(diffLineStyle.Render(line))
+		diffContent.WriteString("\n")
+	}
+
+	b.WriteString(diffContainerStyle.Render(diffContent.String()))
+
+	// Show diff scroll indicators
+	if len(m.diffLines) > m.diffViewport.height {
+		scrollInfo := fmt.Sprintf("Diff: %d-%d of %d lines",
+			m.diffViewport.offset+1,
+			min(m.diffViewport.offset+len(visibleLines), len(m.diffLines)),
+			len(m.diffLines))
+		b.WriteString(helpStyle.Render(scrollInfo))
+		b.WriteString("\n")
+	}
 
 	return b.String()
 }
 
-// min returns the smaller of two integers
+func (m VersionSelectorModel) renderDetails() string {
+	currentVersion := m.versions[m.cursor]
+	details := fmt.Sprintf(
+		"Detailed Information:\n"+
+			"ID: %d\n"+
+			"File Path: %s\n"+
+			"Version: %d\n"+
+			"Timestamp: %s\n"+
+			"File Hash: %s\n"+
+			"File Size: %s (%d bytes)\n"+
+			"Storage Path: %s",
+		currentVersion.ID,
+		currentVersion.FilePath,
+		currentVersion.VersionNumber,
+		currentVersion.Timestamp.Format("2006-01-02 15:04:05 MST"),
+		currentVersion.FileHash,
+		formatFileSize(currentVersion.FileSize),
+		currentVersion.FileSize,
+		currentVersion.StoragePath,
+	)
+	return detailsStyle.Render(details) + "\n"
+}
+
+// Helper functions
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -355,9 +580,10 @@ func min(a, b int) int {
 	return b
 }
 
-func FileVersionSelector(versions []*app.FileVersion) {
+// Updated function signature to include rootDir
+func FileVersionSelector(versions []*app.FileVersion, rootDir string) {
 	fileName := versions[0].FilePath
-	model := NewVersionSelector(versions, fileName)
+	model := NewVersionSelector(versions, fileName, rootDir)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
