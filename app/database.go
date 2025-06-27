@@ -241,11 +241,16 @@ func (dm *DatabaseManager) CreateStoragePath(filePath string, versionNumber int)
 	return filepath.Join(relPath, fmt.Sprintf("v%d_%s", versionNumber, timestamp))
 }
 
-func (dm *DatabaseManager) GetAllVersionedFiles() ([]*FileVersion, error) {
+func (dm *DatabaseManager) GetAllLatestFiles() ([]*FileVersion, error) {
 	query := `
-		SELECT id, file_path, version_number, timestamp, file_hash, file_size, storage_path
-		FROM versions 
-		ORDER BY file_path, version_number DESC
+	SELECT v.id, v.file_path, v.version_number, v.timestamp, v.file_hash, v.file_size, v.storage_path
+		FROM versions v
+		INNER JOIN (
+			SELECT file_path, MAX(version_number) as max_version
+			FROM versions
+			GROUP BY file_path
+		) latest ON v.file_path = latest.file_path AND v.version_number = latest.max_version
+		ORDER BY v.file_path
 	`
 
 	rows, err := dm.db.Query(query)
@@ -278,4 +283,8 @@ func (dm *DatabaseManager) GetAllVersionedFiles() ([]*FileVersion, error) {
 	}
 
 	return fileVersions, nil
+}
+
+func (dm *DatabaseManager) GetFileVersion(absPath string, version int) (FileVersion, error) {
+
 }

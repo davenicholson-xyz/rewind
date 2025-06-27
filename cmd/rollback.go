@@ -94,17 +94,29 @@ func runRollback(cmd *cobra.Command, args []string) {
 
 // listAllVersionedFiles lists all files that have versions in the database
 func listAllVersionedFiles(dbm *app.DatabaseManager) error {
-	app.Logger.Debug("Listing all versioned files")
 
-	versionedFiles, err := dbm.GetAllVersionedFiles()
+	files, err := dbm.GetAllVersionedFiles()
 	if err != nil {
-		return fmt.Errorf("Could not retrieve file list from db: %w", err)
+		return err
 	}
 
+	if len(files) == 0 {
+		fmt.Println("No versioned files found.")
+		return nil
+	}
+
+	// return nil
+	// app.Logger.Debug("Listing all versioned files")
+
+	// versionedFiles, err := dbm.GetAllVersionedFiles()
+	// if err != nil {
+	// 	return fmt.Errorf("Could not retrieve file list from db: %w", err)
+	// }
+	//
 	fmt.Println("📁 Files with available versions:")
 	// fmt.Printf("%+v", versionedFiles)
 
-	for _, ver := range versionedFiles {
+	for _, ver := range files {
 		fmt.Printf("%+v\n", ver)
 	}
 
@@ -139,7 +151,6 @@ func performRollback(dbm *app.DatabaseManager, filePath string, version int, roo
 		"version":  version,
 	}).Info("Performing rollback")
 
-	// Convert to absolute path if relative
 	// absPath, err := filepath.Abs(filePath)
 	_, err := filepath.Abs(filePath)
 	if err != nil {
