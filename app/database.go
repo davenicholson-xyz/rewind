@@ -285,6 +285,40 @@ func (dm *DatabaseManager) GetAllLatestFiles() ([]*FileVersion, error) {
 	return fileVersions, nil
 }
 
-func (dm *DatabaseManager) GetFileVersion(absPath string, version int) (FileVersion, error) {
+func (dm *DatabaseManager) GetFileVersion(absPath string, version int) (*FileVersion, error) {
+	// Convert to relative path for consistent storage
+	relPath, err := filepath.Rel(dm.rootDir, absPath)
+	if err != nil {
+		relPath = absPath
+	}
+
+	query := `
+	SELECT id, file_path, version_number, timestamp, file_hash, file_size, storage_path
+	FROM versions 
+	WHERE file_path = ? AND version_number = ?
+	`
+
+	row := dm.db.QueryRow(query, relPath, version)
+
+	fv := &FileVersion{}
+	var timestampStr string
+
+	err = row.Scan(&fv.ID, &fv.FilePath, &fv.VersionNumber, &timestampStr,
+		&fv.FileHash, &fv.FileSize, &fv.StoragePath)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Version not found
+		}
+		return nil, fmt.Errorf("failed to get file version: %w", err)
+	}
+
+	// Parse timestamp
+	fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+
+	return fv, nil
 
 }

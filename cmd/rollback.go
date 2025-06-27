@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/davenicholson-xyz/rewind/app"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -95,7 +98,7 @@ func runRollback(cmd *cobra.Command, args []string) {
 // listAllVersionedFiles lists all files that have versions in the database
 func listAllVersionedFiles(dbm *app.DatabaseManager) error {
 
-	files, err := dbm.GetAllVersionedFiles()
+	files, err := dbm.GetAllLatestFiles()
 	if err != nil {
 		return err
 	}
@@ -151,51 +154,109 @@ func performRollback(dbm *app.DatabaseManager, filePath string, version int, roo
 		"version":  version,
 	}).Info("Performing rollback")
 
-	// absPath, err := filepath.Abs(filePath)
-	_, err := filepath.Abs(filePath)
+	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	// TODO: Implement the following steps:
-	// 1. Query database to get the version record
-	//    Query: SELECT storage_path, file_hash, file_size FROM versions
-	//           WHERE file_path = ? AND version_number = ?
+	fileVersion, err := dbm.GetFileVersion(absPath, version)
+	if err != nil {
+		return fmt.Errorf("failed to get db entry: %w", err)
+	}
+	app.Logger.WithFields(logrus.Fields{"id": fileVersion.ID, "filePath": fileVersion.FilePath}).Info("Found file version in db")
 
-	// 2. Check if version exists
-	// 3. Verify stored file exists in .rewind/versions/
-	// 4. Create backup of current file (optional)
-	// 5. Copy stored version back to original location
-	// 6. Verify integrity using file hash
+	storedVersionPath := filepath.Join(rootDir, ".rewind", "versions", fileVersion.StoragePath)
 
-	fmt.Printf("🔄 Rolling back %s to version %d\n", filePath, version)
-	fmt.Println("(Implementation needed: restore file from storage)")
+	app.Logger.WithFields(map[string]any{
+		"originalPath": absPath,
+		"storedPath":   storedVersionPath,
+		"version":      version,
+	}).Debug("Paths for rollback")
+
+	if _, err := os.Stat(storedVersionPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("stored version file not found at %s", storedVersionPath)
+		}
+		return fmt.Errorf("failed to access stored version file: %w", err)
+	}
+
+	if err := copyStoredFileToOriginal(storedVersionPath, absPath); err != nil {
+		return fmt.Errorf("failed to restore file: %w", err)
+	}
+
+	if err := verifyFileIntegrity(absPath, fileVersion.FileHash); err != nil {
+		return fmt.Errorf("file integrity check failed after restore: %w", err)
+	}
+
+	fmt.Printf("✅ Successfully rolled back %s to version %d\n", filePath, version)
+
+	return nil
+
+}
+
+func copyStoredFileToOriginal(storagePath, originalPath string) error {
+	sourceFile, err := os.Open(storagePath)
+	if err != nil {
+		return fmt.Errorf("failed to open stored file: %w", err)
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(originalPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+
+	// Sync to ensure data is written to disk
+	if err := destFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync destination file: %w", err)
+	}
 
 	return nil
 }
 
-// Helper functions you might need:
-
-// getFileVersionRecord retrieves a specific version record from database
-func getFileVersionRecord(dbm *app.DatabaseManager, filePath string, version int) (*app.FileVersion, error) {
-	// TODO: Implement database query to get specific version
-	return nil, fmt.Errorf("not implemented")
-}
-
-// copyStoredFileToOriginal copies a file from storage back to its original location
-func copyStoredFileToOriginal(storagePath, originalPath string) error {
-	// TODO: Implement file copy operation
-	return fmt.Errorf("not implemented")
-}
-
-// verifyFileIntegrity checks if restored file matches expected hash
 func verifyFileIntegrity(filePath, expectedHash string) error {
-	// TODO: Calculate current file hash and compare with expected
-	return fmt.Errorf("not implemented")
+	actualHash, err := app.CalculateFileHash(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to calculate file hash: %w", err)
+	}
+
+	if actualHash != expectedHash {
+		return fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, actualHash)
+	}
+
+	return nil
 }
 
-// createBackup creates a backup of the current file before rollback
 func createBackup(filePath string) (string, error) {
-	// TODO: Create timestamped backup of current file
-	return "", fmt.Errorf("not implemented")
+	// Check if original file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return "", nil // No file to backup
+	}
+
+	// Create backup with timestamp
+	timestamp := time.Now().Format("20060102_150405")
+	backupPath := fmt.Sprintf("%s.backup_%s", filePath, timestamp)
+
+	sourceFile, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer sourceFile.Close()
+
+	backupFile, err := os.Create(backupPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create backup file: %w", err)
+	}
+	defer backupFile.Close()
+
+	if _, err := io.Copy(backupFile, sourceFile); err != nil {
+		return "", fmt.Errorf("failed to copy file for backup: %w", err)
+	}
+
+	return backupPath, nil
 }
