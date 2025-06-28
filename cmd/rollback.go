@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/davenicholson-xyz/rewind/app"
+	"github.com/dustin/go-humanize"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -136,9 +137,9 @@ func listFileVersionsTable(dbm *app.DatabaseManager, filePath string, rootDir st
 	for _, fv := range fileVersions {
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n",
 			fv.VersionNumber,
-			app.TimeAgo(fv.Timestamp),
+			humanize.Time(fv.Timestamp),
 			fv.FileHash[:6],
-			app.BytesToHuman(fv.FileSize))
+			humanize.Bytes(uint64(fv.FileSize)))
 	}
 
 	// Flush the writer to ensure all data is written
@@ -172,9 +173,9 @@ func listFileVersionsPlain(dbm *app.DatabaseManager, filePath string) error {
 	for _, fv := range fileVersions {
 		fmt.Printf("%d %s %s %s %s\n",
 			fv.VersionNumber,
-			app.TimeAgo(fv.Timestamp),
+			humanize.Time(fv.Timestamp),
 			fv.FileHash,
-			app.BytesToHuman(fv.FileSize),
+			humanize.Bytes(uint64(fv.FileSize)),
 			fv.StoragePath)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/davenicholson-xyz/rewind/app"
+	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
 
@@ -113,8 +114,8 @@ func showDatabaseStats(cwd string) {
 			}
 		}
 
-		fmt.Printf("  Total size: %s\n", app.BytesToHuman(totalSize))
-		fmt.Printf("  Last change: %s\n", app.TimeAgo(mostRecent))
+		fmt.Printf("  Total size: %s\n", humanize.Bytes(uint64(totalSize)))
+		fmt.Printf("  Last change: %s\n", humanize.Time(mostRecent))
 	}
 }
 
@@ -134,6 +135,7 @@ func showStorageUsage(cwd string) {
 
 	fmt.Printf("\n💾 Storage:\n")
 	fmt.Printf("  Stored versions: %d files\n", fileCount)
-	fmt.Printf("  Storage used: %s\n", app.BytesToHuman(totalSize))
+	fmt.Printf("  Storage used: %s\n", humanize.Bytes(uint64(totalSize)))
+	fmt.Printf("  Storage used: %s\n", humanize.Bytes(uint64(totalSize)))
 	fmt.Printf("  Location: %s\n", versionsDir)
 }
