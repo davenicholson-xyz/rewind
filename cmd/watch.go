@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"slices"
@@ -18,6 +22,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
+
+var daemonFlag bool
+var stopFlag bool
+
+var statusFlag bool
 
 type WatchManager struct {
 	RootDirectory string
@@ -458,55 +467,9 @@ to quickly create a Cobra application.`,
 
 func init() {
 	rootCmd.AddCommand(watchCmd)
-}
-
-func runWatcher() error {
-	app.Logger.Info("Started watcher")
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		app.Logger.WithField("error", err).Error("Unable to get current directory")
-		return fmt.Errorf("unable to get current directory: %w", err)
-	}
-	app.Logger.WithField("cwd", cwd).Debug("Current working directory")
-
-	if err := checkRewindProject(cwd); err != nil {
-		app.Logger.WithField("cwd", cwd).WithField("error", err).Error("Rewind project check failed")
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	app.Logger.WithField("cwd", cwd).Info("Rewind project validated")
-
-	wm, err := NewWatchManager(cwd)
-	if err != nil {
-		app.Logger.WithField("error", err).Error("Failed to create WatchManager")
-		return err
-	}
-	defer wm.Stop()
-
-	app.Logger.WithField("monitoredDirs", len(wm.Monitored)).WithField("ignoredPatterns", len(wm.Ignored)).Info("WatchManager created successfully")
-	app.Logger.WithField("directories", wm.Monitored).Debug("Monitored directories")
-
-	if err := wm.PerformInitialScan(); err != nil {
-		app.Logger.WithField("error", err).Error("Initial scan failed")
-		return fmt.Errorf("initial scan failed: %w", err)
-	}
-
-	// Start watching
-	if err := wm.Start(); err != nil {
-		app.Logger.WithField("error", err).Error("Failed to start watcher")
-		return err
-	}
-
-	app.Logger.Info("File system watcher is running. Press Ctrl+C to stop.")
-
-	// Wait for interrupt signal
-	select {
-	case <-wm.ctx.Done():
-		app.Logger.Info("Watcher context cancelled")
-	}
-
-	return nil
+	watchCmd.Flags().BoolVarP(&daemonFlag, "daemon", "d", false, "Run as background daemon")
+	watchCmd.Flags().BoolVar(&stopFlag, "stop", false, "Stop running daemon")
+	watchCmd.Flags().BoolVar(&statusFlag, "status", false, "Check daemon status")
 }
 
 func checkRewindProject(cwd string) error {
@@ -698,4 +661,212 @@ func (d *EventDebouncer) ShouldProcess(filePath string, eventType string) bool {
 	}
 
 	return true
+}
+
+func runWatcher() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("unable to get current directory: %w", err)
+	}
+
+	// Handle daemon operations
+	if stopFlag {
+		return stopDaemon(cwd)
+	}
+
+	if statusFlag {
+		return checkDaemonStatus(cwd)
+	}
+
+	// If daemon flag is set, fork to background
+	if daemonFlag {
+		return startDaemon(cwd)
+	}
+
+	// Regular foreground execution
+	return runWatcherForeground(cwd)
+}
+
+func startDaemon(cwd string) error {
+	app.Logger.Info("Starting rewind watcher as daemon")
+
+	// Check if daemon is already running
+	if isDaemonRunning(cwd) {
+		fmt.Println("✅ Rewind watcher is already running")
+		return nil
+	}
+
+	// Get current executable path
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// Create log file for daemon output
+	logDir := filepath.Join(cwd, ".rewind", "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
+
+	logFile := filepath.Join(logDir, "daemon.log")
+
+	// Start the process in background
+	cmd := exec.Command(executable, "watch")
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "REWIND_DAEMON=1")
+
+	// Redirect output to log file
+	if logFileHandle, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		cmd.Stdout = logFileHandle
+		cmd.Stderr = logFileHandle
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start daemon: %w", err)
+	}
+
+	// Save PID file
+	pidFile := getPidFilePath(cwd)
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0644); err != nil {
+		return fmt.Errorf("failed to write PID file: %w", err)
+	}
+
+	fmt.Printf("✅ Rewind watcher started as daemon (PID: %d)\n", cmd.Process.Pid)
+	fmt.Printf("📝 Logs: %s\n", logFile)
+
+	return nil
+}
+
+func stopDaemon(cwd string) error {
+	pidFile := getPidFilePath(cwd)
+
+	pidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("❌ No daemon running")
+			return nil
+		}
+		return fmt.Errorf("failed to read PID file: %w", err)
+	}
+
+	pid, err := strconv.Atoi(string(pidData))
+	if err != nil {
+		return fmt.Errorf("invalid PID in file: %w", err)
+	}
+
+	// Find and kill the process
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process: %w", err)
+	}
+
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		// Process might already be dead, try SIGKILL
+		if err := process.Kill(); err != nil {
+			return fmt.Errorf("failed to kill process: %w", err)
+		}
+	}
+
+	// Wait a bit for graceful shutdown
+	time.Sleep(2 * time.Second)
+
+	// Clean up PID file
+	os.Remove(pidFile)
+
+	fmt.Printf("✅ Rewind watcher daemon stopped (PID: %d)\n", pid)
+	return nil
+}
+
+func checkDaemonStatus(cwd string) error {
+	if isDaemonRunning(cwd) {
+		pidFile := getPidFilePath(cwd)
+		pidData, _ := os.ReadFile(pidFile)
+		fmt.Printf("✅ Rewind watcher is running (PID: %s)\n", string(pidData))
+	} else {
+		fmt.Println("❌ Rewind watcher is not running")
+	}
+	return nil
+}
+
+func isDaemonRunning(cwd string) bool {
+	pidFile := getPidFilePath(cwd)
+
+	pidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+
+	pid, err := strconv.Atoi(string(pidData))
+	if err != nil {
+		return false
+	}
+
+	// Check if process is actually running
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+
+	// Send signal 0 to check if process exists
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+func getPidFilePath(cwd string) string {
+	return filepath.Join(cwd, ".rewind", "daemon.pid")
+}
+
+func runWatcherForeground(cwd string) error {
+	// Check if running as daemon
+	isDaemon := os.Getenv("REWIND_DAEMON") == "1"
+
+	if isDaemon {
+		// Setup signal handling for graceful shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+		_, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		go func() {
+			<-sigChan
+			app.Logger.Info("Received shutdown signal")
+			cancel()
+		}()
+	}
+
+	app.Logger.Info("Starting watcher in foreground mode")
+
+	if err := checkRewindProject(cwd); err != nil {
+		return err
+	}
+
+	wm, err := NewWatchManager(cwd)
+	if err != nil {
+		return err
+	}
+	defer wm.Stop()
+
+	if err := wm.PerformInitialScan(); err != nil {
+		return fmt.Errorf("initial scan failed: %w", err)
+	}
+
+	if err := wm.Start(); err != nil {
+		return err
+	}
+
+	if isDaemon {
+		app.Logger.Info("Daemon watcher is running")
+		// Wait for context cancellation
+		<-wm.ctx.Done()
+
+		// Clean up PID file on exit
+		pidFile := getPidFilePath(cwd)
+		os.Remove(pidFile)
+	} else {
+		fmt.Println("File system watcher is running. Press Ctrl+C to stop.")
+		<-wm.ctx.Done()
+	}
+
+	return nil
 }
