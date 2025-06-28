@@ -79,7 +79,7 @@ func runInit(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Rewind project initialized in %s\n", absTargetDir)
+	fmt.Printf("📼 Rewind project initialized in %s\n", absTargetDir)
 
 	// Change to the target directory before starting watcher
 	if err := os.Chdir(absTargetDir); err != nil {
@@ -89,11 +89,11 @@ func runInit(cmd *cobra.Command, args []string) {
 
 	// Start watcher based on mode
 	if foregroundMode {
-		fmt.Println("🚀 Starting watcher in foreground mode...")
+		// fmt.Println("🚀 Starting watcher in foreground mode...")
 		fmt.Println("Press Ctrl+C to stop the watcher.")
 		runWatcherForeground(targetDir)
 	} else {
-		fmt.Println("🚀 Starting watcher daemon...")
+		// fmt.Println("🚀 Starting watcher daemon...")
 		if err := startDaemonFromInit(absTargetDir); err != nil {
 			fmt.Printf("Warning: Could not start daemon: %v\n", err)
 			fmt.Println("You can start it manually with: rewind watch --daemon")
@@ -136,6 +136,15 @@ func initializeRewindProject(absTargetDir string) error {
 	}
 	app.Logger.WithField("dir", rewindDir).Info("Created .rewind directory")
 
+	dbm, err := app.NewDatabaseManager(absTargetDir)
+	if err != nil {
+		return fmt.Errorf("unable to create db manager: %w", err)
+	}
+
+	if err := dbm.InitDatabase(); err != nil {
+		return fmt.Errorf("unable to initialize database: %w", err)
+	}
+
 	if createEnvrc {
 		if err := createEnvrcFile(absTargetDir); err != nil {
 			return fmt.Errorf("unable to create .envrc file: %w", err)
@@ -148,15 +157,6 @@ func initializeRewindProject(absTargetDir string) error {
 			return fmt.Errorf("unable to create .rwignore file: %w", err)
 		}
 		app.Logger.WithField("dir", filepath.Join(absTargetDir, IgnoreFileName)).Info("Created .rwignore file")
-	}
-
-	dbm, err := app.NewDatabaseManager(absTargetDir)
-	if err != nil {
-		return fmt.Errorf("unable to create db manager: %w", err)
-	}
-
-	if err := dbm.InitDatabase(); err != nil {
-		return fmt.Errorf("unable to initialize database: %w", err)
 	}
 
 	return nil
@@ -243,7 +243,7 @@ func startDaemonFromInit(cwd string) error {
 
 	// Check if daemon is already running
 	if isDaemonRunning(cwd) {
-		fmt.Println("✅ Rewind watcher is already running")
+		fmt.Println("📼 Rewind watcher is already running")
 		return nil
 	}
 
@@ -283,19 +283,10 @@ func startDaemonFromInit(cwd string) error {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
-	fmt.Printf("✅ Rewind watcher started as daemon (PID: %d)\n", cmd.Process.Pid)
-	fmt.Printf("📝 Logs: %s\n", logFile)
-	fmt.Printf("💡 Use 'rewind status' to check daemon status\n")
-	fmt.Printf("💡 Use 'rewind watch --stop' to stop the daemon\n")
+	fmt.Println("📼 Rewind watcher started")
+	// fmt.Printf("📝 Logs: %s\n", logFile)
+	// fmt.Printf("💡 Use 'rewind status' to check daemon status\n")
+	// fmt.Printf("💡 Use 'rewind watch --stop' to stop the daemon\n")
 
 	return nil
 }
-
-// // runWatcherForeground runs the watcher in foreground mode during init
-// func runWatcherForeground() {
-// 	if err := runWatcher(); err != nil {
-// 		app.Logger.WithField("error", err).Error("Watcher failed")
-// 		fmt.Printf("Error: %v\n", err)
-// 		os.Exit(1)
-// 	}
-// }

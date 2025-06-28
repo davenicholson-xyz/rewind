@@ -479,7 +479,7 @@ func checkRewindProject(cwd string) error {
 	if _, err := os.Stat(rewindPath); err != nil {
 		if os.IsNotExist(err) {
 			app.Logger.WithField("cwd", cwd).Warn("Not in a Rewind project - .rewind directory not found")
-			return fmt.Errorf("⛔ Not in a Rewind project")
+			return fmt.Errorf("📼 Not in a Rewind project")
 		}
 		app.Logger.WithField("path", rewindPath).WithField("error", err).Error("Error checking .rewind directory")
 		return err
@@ -692,7 +692,7 @@ func startDaemon(cwd string) error {
 
 	// Check if daemon is already running
 	if isDaemonRunning(cwd) {
-		fmt.Println("✅ Rewind watcher is already running")
+		fmt.Println("📼 Rewind watcher is already running")
 		return nil
 	}
 
@@ -731,8 +731,8 @@ func startDaemon(cwd string) error {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
-	fmt.Printf("✅ Rewind watcher started as daemon (PID: %d)\n", cmd.Process.Pid)
-	fmt.Printf("📝 Logs: %s\n", logFile)
+	// fmt.Printf("✅ Rewind watcher started as daemon (PID: %d)\n", cmd.Process.Pid)
+	// fmt.Printf("📝 Logs: %s\n", logFile)
 
 	return nil
 }
@@ -781,7 +781,7 @@ func checkDaemonStatus(cwd string) error {
 	if isDaemonRunning(cwd) {
 		pidFile := getPidFilePath(cwd)
 		pidData, _ := os.ReadFile(pidFile)
-		fmt.Printf("✅ Rewind watcher is running (PID: %s)\n", string(pidData))
+		fmt.Printf("📼 Rewind watcher is running (PID: %s)\n", string(pidData))
 	} else {
 		fmt.Println("❌ Rewind watcher is not running")
 	}
@@ -864,7 +864,7 @@ func runWatcherForeground(cwd string) error {
 		pidFile := getPidFilePath(cwd)
 		os.Remove(pidFile)
 	} else {
-		fmt.Println("File system watcher is running. Press Ctrl+C to stop.")
+		fmt.Println("📼 File system watcher is running. Press Ctrl+C to stop.")
 		<-wm.ctx.Done()
 	}
 
