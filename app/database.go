@@ -301,7 +301,7 @@ func (dm *DatabaseManager) GetFileVersions(absPath string) ([]*FileVersion, erro
 	SELECT v.id, v.file_path, v.version_number, v.timestamp, v.file_hash, v.file_size, v.storage_path
 	FROM versions v
 	WHERE v.file_path = ?
-	ORDER BY v.version_number
+	ORDER BY v.version_number DESC
 	`
 
 	rows, err := dm.db.Query(query, relPath)
