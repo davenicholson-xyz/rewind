@@ -18,17 +18,20 @@ Rewind automatically saves every version of your files when they change, giving 
 # Initialize rewind in your project
 rewind init
 
-# Start watching for changes
+# Start watching for changes (in another terminal)
 rewind watch
 
-# Check status (in another terminal)
+# Check daemon status
 rewind status
 
 # View file history
-rewind log src/main.js
+rewind rollback src/main.js
 
-# Restore a file to a previous version
-rewind restore src/main.js --version 5
+# Rollback a file to a previous version
+rewind rollback src/main.js --version 5
+
+# Show differences between versions
+rewind diff src/main.js --version 3
 ```
 
 ## Real-World Examples
@@ -42,11 +45,11 @@ You're working with an AI coding assistant that goes a bit too far with refactor
 # AI Agent: "Let me optimize this for you!"
 # After: Your component is now 5 lines and completely broken
 
-# No problem - restore the previous version
-rewind log components/UserProfile.tsx
-# Shows: Version 15 (2 minutes ago) - "Working version before AI refactor"
+# No problem - check the version history
+rewind rollback components/UserProfile.tsx
+# Shows: Version 15 (2 minutes ago) - working version before AI refactor
 
-rewind restore components/UserProfile.tsx --version 15
+rewind rollback components/UserProfile.tsx --version 15
 # ✅ Your working code is back instantly
 ```
 
@@ -54,43 +57,36 @@ rewind restore components/UserProfile.tsx --version 15
 
 ```bash
 # Accidentally deleted a crucial function during cleanup
-# Don't remember exactly when you deleted it
+# Check if the file is in your deleted files
 
-rewind log utils/helpers.js --limit 20
-# Browse through recent versions to find when it disappeared
+rewind restore
+# Lists all deleted files with timestamps
 
-rewind show utils/helpers.js --version 8
-# Preview the version to confirm it has your function
-
-rewind restore utils/helpers.js --version 8
-# Restored! Your function is back
+# Or restore a specific deleted file
+rewind restore utils/helpers.js
+# ✅ Your deleted file is restored
 ```
 
-### "What Did I Change Yesterday?"
+### "What Did I Change?"
 
 ```bash
-# See what changed in your main file yesterday
-rewind diff src/app.js --since "24 hours ago"
+# See what changed between current version and version 3
+rewind diff src/app.js --version 3
 
-# Compare current version with version from this morning  
-rewind diff src/app.js --version 12
-
-# Restore just the good parts from an older version
-rewind show src/app.js --version 10 > temp.js
-# Copy the parts you want, paste back into current file
+# View version history in different formats
+rewind rollback src/app.js --json
+rewind rollback src/app.js --csv
 ```
 
 ### "Experimental Feature Gone Wrong"
 
 ```bash
 # You spent 2 hours implementing a feature that isn't working
-# Instead of debugging, just go back to before you started
+# Check the file's version history
+rewind rollback src/main.js
 
-rewind log src/
-# Find the version from 2 hours ago
-
-rewind restore-all --version 25
-# Restores ALL files to version 25 state
+# Rollback to version from 2 hours ago
+rewind rollback src/main.js --version 8 --confirm
 # Your experiment is gone, but your working code is back
 ```
 
@@ -101,12 +97,6 @@ rewind restore-all --version 25
 1. Download the latest release for your platform from [GitHub Releases](https://github.com/davenicholson-xyz/rewind/releases)
 2. Extract and place the binary in your PATH
 3. Make it executable: `chmod +x rewind`
-
-### Install Script (Coming Soon)
-
-```bash
-curl -sSL https://get-rewind.dev | bash
-```
 
 ### Build from Source
 
@@ -120,30 +110,31 @@ go build
 ## Commands
 
 ### Project Setup
-- `rewind init` - Initialize rewind in current directory
-- `rewind init /path/to/project` - Initialize rewind in specific directory
+- `rewind init [path]` - Initialize rewind in current or specified directory
+- `rewind remove [--force]` - Remove rewind from current directory
 
 ### Daemon Control  
 - `rewind watch` - Start the file watching daemon
 - `rewind status` - Show daemon status and active watches
-- `rewind add /path/to/project` - Add a project to watch list
-- `rewind remove /path/to/project` - Remove project from watch list
 
 ### File History
-- `rewind log [file]` - Show version history for file or directory
-- `rewind show <file> --version <n>` - Preview a specific version
+- `rewind rollback <file>` - Show version history for file
+- `rewind rollback <file> --json` - Show history as JSON
+- `rewind rollback <file> --csv` - Show history as CSV
 - `rewind diff <file> [--version <n>]` - Show changes between versions
 
-### Restore Files
-- `rewind restore <file> --version <n>` - Restore file to specific version
-- `rewind restore <file> --time "2 hours ago"` - Restore to point in time
-- `rewind restore-all --version <n>` - Restore all files to specific version
+### Restore Operations
+- `rewind rollback <file> --version <n>` - Rollback file to specific version
+- `rewind rollback <file> --version <n> --confirm` - Rollback with confirmation
+- `rewind restore` - List all deleted files for restoration
+- `rewind restore <file>` - Restore specific deleted file
+- `rewind restore --confirm` - Restore with confirmation prompts
 
 ## How It Works
 
 1. **Initialize**: `rewind init` creates a `.rewind` directory with a SQLite database
-2. **Watch**: `rewind watch` starts a daemon that monitors file changes
-3. **Save**: Every time you save a file, rewind stores a copy with metadata
+2. **Watch**: `rewind watch` starts a daemon that monitors file changes using filesystem events
+3. **Save**: Every time you save a file, rewind stores a copy with metadata and calculates a content hash
 4. **Restore**: Access any previous version instantly through the CLI
 
 ## What Gets Versioned?
@@ -161,43 +152,44 @@ go build
 - Temporary files (`.tmp`, `.log`, etc.)
 - IDE files (`.vscode/`, `.idea/`, etc.)
 
-Customize what gets ignored by editing `.rewind/ignore` or creating `.rwignore` files.
+Customize what gets ignored by editing `.rewind/ignore` or creating `.rwignore` files in your project.
+
+## Configuration
+
+Rewind stores its configuration in `~/.config/rewind/`:
+- `watchlist.json` - Projects being watched by the daemon
+
+Project-specific settings in `.rewind/`:
+- `ignore` - Files/patterns to ignore (like .gitignore)
+- `versions/` - Stored file versions organized by path and timestamp
+- `versions.db` - SQLite database with version metadata
 
 ## Performance
 
-- **Storage**: Only changed files are stored (deduplication by content hash)
+- **Storage**: Only stores files when content actually changes (deduplication by SHA256 hash)
 - **Speed**: File operations are near-instant, even with thousands of versions
 - **Memory**: Minimal overhead - the daemon uses ~10MB RAM typically
-- **Disk**: Efficient storage with automatic cleanup of old versions (configurable)
+- **Disk**: Efficient storage with content-based deduplication
 
 ## vs Git
 
 | Feature | Rewind | Git |
 |---------|--------|-----|
 | Setup | One command | Multiple steps |
-| Commits | Automatic | Manual |
+| Commits | Automatic on save | Manual |
 | Staging | None | Required |
 | Solo dev | Perfect | Overkill |
 | Teams | No | Yes |
 | Branches | No | Yes |
 | Remote sync | No | Yes |
 | Speed | Instant | Fast |
+| File restoration | Built-in | Manual checkout |
 
 **Use Rewind when:** You want effortless local versioning for solo development
 
 **Use Git when:** You need team collaboration, branching, or remote repositories
 
-## Configuration
-
-Rewind stores its configuration in `~/.config/rewind/`:
-
-- `watchlist.json` - Projects being watched
-- `config.yaml` - Global settings (coming soon)
-
-Project-specific settings in `.rewind/`:
-- `ignore` - Files/patterns to ignore  
-- `versions/` - Stored file versions
-- `rewind.db` - Version metadata database
+**Use Both:** Many developers use rewind for automatic local history and Git for project milestones and collaboration
 
 ## FAQ
 
@@ -205,7 +197,7 @@ Project-specific settings in `.rewind/`:
 A: No, they solve different problems. Use rewind for automatic local versioning, Git for team collaboration and remote storage.
 
 **Q: How much disk space does it use?**  
-A: Only stores changed files once (deduplicated). A typical project might use 100-500MB for months of history.
+A: Only stores changed files once (deduplicated by content hash). A typical project might use 100-500MB for months of history.
 
 **Q: Can I use it with Git?**  
 A: Yes! Rewind ignores `.git/` by default. Many developers use both together.
@@ -215,6 +207,9 @@ A: You lose all version history, but your current files are unaffected. Just run
 
 **Q: Does it work with large files?**  
 A: Yes, but it's optimized for text files. Large binaries will consume more storage.
+
+**Q: How do I stop the daemon?**  
+A: Press Ctrl+C in the terminal where `rewind watch` is running, or kill the process.
 
 ## Contributing
 
