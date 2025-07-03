@@ -267,6 +267,7 @@ type FileVersionJSON struct {
 	SizeDiffBytes int64  `json:"size_diff_bytes"`
 	Hash          string `json:"hash"`
 	FilePath      string `json:"file_path"`
+	StoragePath   string `json:"storage_path"`
 }
 
 type FileVersionsResponse struct {
@@ -310,6 +311,7 @@ func displayAsJSON(versions []*database.FileVersion, filePath string) error {
 			SizeDiffBytes: sizeDiffBytes,
 			Hash:          version.FileHash,
 			FilePath:      filePath,
+			StoragePath:   version.StoragePath,
 		}
 	}
 
