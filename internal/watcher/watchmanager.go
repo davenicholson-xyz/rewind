@@ -28,6 +28,7 @@ type WatchManager struct {
 	EventChan      chan fsnotify.Event // Exposed channel for consuming events
 	startTime      time.Time           // Track when the manager started
 	mu             sync.RWMutex        // Protect concurrent access to status fields
+	stopped        bool                // Track if Stop() has been called
 }
 
 type WatchManagerStatus struct {
@@ -456,6 +457,15 @@ func (wm *WatchManager) RemoveWatch(path string) error {
 
 // Stop gracefully shuts down the WatchManager
 func (wm *WatchManager) Stop() error {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	// Check if already stopped
+	if wm.stopped {
+		app.Logger.Debug("Watch manager already stopped")
+		return nil
+	}
+
 	app.Logger.Debug("Stopping watch manager")
 
 	// Cancel context to stop all goroutines
@@ -468,6 +478,9 @@ func (wm *WatchManager) Stop() error {
 
 	// Close event channel
 	close(wm.EventChan)
+
+	// Mark as stopped
+	wm.stopped = true
 
 	// Wait for all goroutines to finish
 	wm.wg.Wait()
@@ -623,6 +636,11 @@ func (wm *WatchManager) getActiveGoroutineCount() int {
 		return 1 // The main EventsNotifier goroutine
 	}
 	return 0
+}
+
+// Context returns the WatchManager's context for external monitoring
+func (wm *WatchManager) Context() context.Context {
+	return wm.ctx
 }
 
 func (wm *WatchManager) AddWatchDirectory(watch *Watch, relPath string) error {

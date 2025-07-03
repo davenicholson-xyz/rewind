@@ -125,6 +125,19 @@ func (h *Handler) processIPCMessage(msg network.IPCMessage) error {
 				Message: string(statusJSON),
 			}
 		}
+	case "stop":
+		app.Logger.Info("Received stop command via IPC")
+		response = Response{
+			Success: true,
+			Message: "Stop command received, shutting down...",
+		}
+		// Send response first, then initiate shutdown
+		if err := json.NewEncoder(msg.Connection).Encode(response); err != nil {
+			app.Logger.WithError(err).Error("Failed to send IPC response")
+		}
+		// Trigger graceful shutdown
+		h.WatchManager.Stop()
+		return nil
 	default:
 		app.Logger.WithField("action", message.Action).Error("Unknown action")
 		response = Response{

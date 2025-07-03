@@ -288,7 +288,10 @@ func installLaunchdService(execPath string) error {
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
 	<key>StandardOutPath</key>
 	<string>%s/Library/Logs/rewind.log</string>
 	<key>StandardErrorPath</key>
