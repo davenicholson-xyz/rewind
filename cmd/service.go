@@ -78,6 +78,22 @@ func getExecutablePath() (string, error) {
 	return filepath.Abs(executable)
 }
 
+func killRewindWatchProcesses() error {
+	// Find and kill any rewind watch processes
+	cmd := exec.Command("pkill", "-f", "rewind watch")
+	err := cmd.Run()
+	
+	// pkill returns exit code 1 if no processes were found, which is not an error
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return nil
+		}
+		return fmt.Errorf("failed to kill rewind watch processes: %v", err)
+	}
+	
+	return nil
+}
+
 func installService() error {
 	execPath, err := getExecutablePath()
 	if err != nil {
@@ -167,7 +183,7 @@ After=graphical-session.target
 [Service]
 Type=simple
 ExecStart=%s watch
-Restart=always
+Restart=on-failure
 RestartSec=5
 
 [Install]
@@ -222,7 +238,13 @@ func startSystemdService() error {
 }
 
 func stopSystemdService() error {
-	return exec.Command("systemctl", "--user", "stop", "rewind.service").Run()
+	// Stop the systemd service first
+	if err := exec.Command("systemctl", "--user", "stop", "rewind.service").Run(); err != nil {
+		return err
+	}
+	
+	// Kill any remaining rewind watch processes
+	return killRewindWatchProcesses()
 }
 
 func statusSystemdService() error {
@@ -311,7 +333,13 @@ func startLaunchdService() error {
 }
 
 func stopLaunchdService() error {
-	return exec.Command("launchctl", "stop", "com.rewind.watcher").Run()
+	// Stop the launchd service first
+	if err := exec.Command("launchctl", "stop", "com.rewind.watcher").Run(); err != nil {
+		return err
+	}
+	
+	// Kill any remaining rewind watch processes
+	return killRewindWatchProcesses()
 }
 
 func statusLaunchdService() error {
