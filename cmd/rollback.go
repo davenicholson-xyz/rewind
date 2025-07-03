@@ -320,7 +320,6 @@ func displayAsJSON(versions []*database.FileVersion, filePath string) error {
 	}
 
 	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
 	return encoder.Encode(response)
 }
 
