@@ -332,16 +332,38 @@ func uninstallLaunchdService() error {
 }
 
 func startLaunchdService() error {
-	return exec.Command("launchctl", "start", "com.rewind.watcher").Run()
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get user home directory: %v", err)
+	}
+
+	plistFile := filepath.Join(homeDir, "Library", "LaunchAgents", "com.rewind.watcher.plist")
+
+	// Check if service is already loaded
+	if err := exec.Command("launchctl", "list", "com.rewind.watcher").Run(); err == nil {
+		// Service is already loaded, just start it
+		return exec.Command("launchctl", "start", "com.rewind.watcher").Run()
+	}
+
+	// Service is not loaded, load it (this will also start it due to RunAtLoad: true)
+	return exec.Command("launchctl", "load", plistFile).Run()
 }
 
 func stopLaunchdService() error {
-	// Stop the launchd service first
-	if err := exec.Command("launchctl", "stop", "com.rewind.watcher").Run(); err != nil {
-		return err
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get user home directory: %v", err)
+	}
+
+	plistFile := filepath.Join(homeDir, "Library", "LaunchAgents", "com.rewind.watcher.plist")
+
+	// Unload the service - this prevents auto-restart by completely removing it from launchd
+	if err := exec.Command("launchctl", "unload", plistFile).Run(); err != nil {
+		// If unload fails, try to stop it first then kill processes
+		exec.Command("launchctl", "stop", "com.rewind.watcher").Run()
 	}
 	
-	// Kill any remaining rewind watch processes
+	// Kill any remaining rewind watch processes as backup cleanup
 	return killRewindWatchProcesses()
 }
 
