@@ -1,5 +1,5 @@
 <p align="center">
-<img src="/images/logo1.png" alt="rewind logo" width="140px"/>
+<img src="/images/logo1.png" alt="rewind logo" width="240px"/>
 <h2>Rewind</h2>
 </p>
 
