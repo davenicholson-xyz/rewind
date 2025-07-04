@@ -1,4 +1,7 @@
-# Rewind
+<p align="center">
+<img src="/images/logo1.png" alt="rewind logo" width="140px"/>
+<h2>Rewind</h2>
+</p>
 
 **Simple, automatic version control for solo developers**
 
