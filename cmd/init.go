@@ -192,6 +192,22 @@ node_modules/*
 *.tmp
 *.*~
 .vscode/*
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tbz2
+*.tar.xz
+*.txz
+*.gz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.lz
+*.lzma
+*.Z
 `
 
 	ignoreFile := filepath.Join(dir, "ignore")
