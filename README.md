@@ -4,6 +4,9 @@
 
 Rewind automatically saves every version of your files when they change, giving you instant access to your entire editing history. Perfect for when you need to quickly restore a file after an overzealous AI agent, a bad refactor, or just want to see what your code looked like yesterday.
 
+[![Release](https://img.shields.io/github/release/davenicholson-xyz/rewind.svg)](https://github.com/davenicholson-xyz/rewind/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20|%20macos-blue)]()
+
 ## Why Rewind?
 
 - 🔄 **Automatic**: No commits, no staging - just code and save
