@@ -265,11 +265,38 @@ func displayAsCSV(versions []*database.FileVersion, filePath string) error {
 		currentSize = versions[0].FileSize
 	}
 
+	// Get database manager to fetch tags
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	rewindRoot, err := findRewindRoot(absPath)
+	if err != nil {
+		return fmt.Errorf("not in a rewind project: %w", err)
+	}
+
+	db, err := database.NewDatabaseManager(rewindRoot)
+	if err != nil {
+		return fmt.Errorf("failed to create database manager: %w", err)
+	}
+
+	if err := db.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	// Get all tags for this file
+	allTags, err := db.GetAllTagsForFile(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to get tags: %w", err)
+	}
+
 	writer := csv.NewWriter(os.Stdout)
 	defer writer.Flush()
 
 	// Write header
-	if err := writer.Write([]string{"Version", "Timestamp", "Size", "SizeBytes", "SizeDiff", "SizeDiffBytes", "Hash", "FilePath"}); err != nil {
+	if err := writer.Write([]string{"Version", "Timestamp", "Size", "SizeBytes", "SizeDiff", "SizeDiffBytes", "Hash", "Tags", "FilePath"}); err != nil {
 		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
 
@@ -291,6 +318,18 @@ func displayAsCSV(versions []*database.FileVersion, filePath string) error {
 			}
 		}
 
+		// Format tags
+		var tagsStr string
+		if tags, exists := allTags[version.VersionNumber]; exists && len(tags) > 0 {
+			tagNames := make([]string, len(tags))
+			for i, tag := range tags {
+				tagNames[i] = tag.TagName
+			}
+			tagsStr = strings.Join(tagNames, "; ")
+		} else {
+			tagsStr = ""
+		}
+
 		record := []string{
 			strconv.Itoa(version.VersionNumber),
 			version.Timestamp.Format("2006-01-02 15:04:05"),
@@ -299,6 +338,7 @@ func displayAsCSV(versions []*database.FileVersion, filePath string) error {
 			sizeDiffStr,
 			sizeDiffBytes,
 			version.FileHash,
+			tagsStr,
 			filePath,
 		}
 
@@ -311,16 +351,17 @@ func displayAsCSV(versions []*database.FileVersion, filePath string) error {
 }
 
 type FileVersionJSON struct {
-	Version       int    `json:"version"`
-	Timestamp     string `json:"timestamp"`
-	TimestampUnix int64  `json:"timestamp_unix"`
-	Size          string `json:"size"`
-	SizeBytes     int64  `json:"size_bytes"`
-	SizeDiff      string `json:"size_diff"`
-	SizeDiffBytes int64  `json:"size_diff_bytes"`
-	Hash          string `json:"hash"`
-	FilePath      string `json:"file_path"`
-	StoragePath   string `json:"storage_path"`
+	Version       int      `json:"version"`
+	Timestamp     string   `json:"timestamp"`
+	TimestampUnix int64    `json:"timestamp_unix"`
+	Size          string   `json:"size"`
+	SizeBytes     int64    `json:"size_bytes"`
+	SizeDiff      string   `json:"size_diff"`
+	SizeDiffBytes int64    `json:"size_diff_bytes"`
+	Hash          string   `json:"hash"`
+	Tags          []string `json:"tags"`
+	FilePath      string   `json:"file_path"`
+	StoragePath   string   `json:"storage_path"`
 }
 
 type FileVersionsResponse struct {
@@ -334,6 +375,33 @@ func displayAsJSON(versions []*database.FileVersion, filePath string) error {
 	var currentSize int64
 	if len(versions) > 0 {
 		currentSize = versions[0].FileSize
+	}
+
+	// Get database manager to fetch tags
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	rewindRoot, err := findRewindRoot(absPath)
+	if err != nil {
+		return fmt.Errorf("not in a rewind project: %w", err)
+	}
+
+	db, err := database.NewDatabaseManager(rewindRoot)
+	if err != nil {
+		return fmt.Errorf("failed to create database manager: %w", err)
+	}
+
+	if err := db.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	// Get all tags for this file
+	allTags, err := db.GetAllTagsForFile(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to get tags: %w", err)
 	}
 
 	jsonVersions := make([]FileVersionJSON, len(versions))
@@ -354,6 +422,17 @@ func displayAsJSON(versions []*database.FileVersion, filePath string) error {
 			}
 		}
 
+		// Get tags for this version
+		var tags []string
+		if versionTags, exists := allTags[version.VersionNumber]; exists && len(versionTags) > 0 {
+			tags = make([]string, len(versionTags))
+			for j, tag := range versionTags {
+				tags[j] = tag.TagName
+			}
+		} else {
+			tags = []string{}
+		}
+
 		jsonVersions[i] = FileVersionJSON{
 			Version:       version.VersionNumber,
 			Timestamp:     version.Timestamp.Format("2006-01-02 15:04:05"),
@@ -363,6 +442,7 @@ func displayAsJSON(versions []*database.FileVersion, filePath string) error {
 			SizeDiff:      sizeDiffStr,
 			SizeDiffBytes: sizeDiffBytes,
 			Hash:          version.FileHash,
+			Tags:          tags,
 			FilePath:      filePath,
 			StoragePath:   version.StoragePath,
 		}
