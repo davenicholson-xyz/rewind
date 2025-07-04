@@ -92,3 +92,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 *Never lose code again. Never fear the AI agent. Code with confidence.*
+# rewind.nvim
