@@ -13,6 +13,13 @@ Rewind automatically saves every version of your files when they change, giving 
 - 💾 **Local**: Everything stays on your machine
 - 🧠 **Smart**: Ignores common files you don't want versioned (.git, node_modules, etc.)
 
+## Install
+
+Install on linux/mac with the following script
+```sh
+curl -sSL https://raw.githubusercontent.com/davenicholson-xyz/wallchemy/main/install.sh | bash
+```
+
 ## Quick Start
 
 ```bash
