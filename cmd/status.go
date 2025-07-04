@@ -75,19 +75,17 @@ func displayStatus(statusJSON string, currentDir string, jsonOutput bool) error 
 	// Handle JSON output
 	if jsonOutput {
 		if inWatchedDir {
-			// Filter status to only include current watch details
+			// Set watch_details to single object for current watch
 			if watchDetails, ok := status["watch_details"].([]interface{}); ok {
-				var filteredDetails []interface{}
 				for _, detail := range watchDetails {
 					if watchMap, ok := detail.(map[string]interface{}); ok {
 						path := getString(watchMap, "path")
 						if path == currentWatchRoot {
-							filteredDetails = append(filteredDetails, detail)
+							status["watch_details"] = detail
 							break
 						}
 					}
 				}
-				status["watch_details"] = filteredDetails
 			}
 		} else {
 			// Remove watch_details when not in a watched directory
@@ -115,20 +113,10 @@ func displayStatus(statusJSON string, currentDir string, jsonOutput bool) error 
 		fmt.Printf("Active Watches: %.0f\n", totalWatches)
 	}
 
-	if totalDirs, ok := status["total_watched_dirs"].(float64); ok {
-		fmt.Printf("Watched Directories: %.0f\n", totalDirs)
-	}
-
 	if uptime, ok := status["uptime_duration"].(string); ok && uptime != "" {
 		fmt.Printf("Uptime: %s\n", uptime)
 	}
 
-	// Display event channel info
-	if channelSize, ok := status["event_channel_size"].(float64); ok {
-		if channelCap, ok := status["event_channel_capacity"].(float64); ok {
-			fmt.Printf("Event Channel: %.0f/%.0f\n", channelSize, channelCap)
-		}
-	}
 
 	// Display watch details only if in a watched directory
 	if inWatchedDir {
@@ -136,7 +124,7 @@ func displayStatus(statusJSON string, currentDir string, jsonOutput bool) error 
 			fmt.Println("\nWatch Details")
 			fmt.Println("=============")
 			
-			for i, detail := range watchDetails {
+			for _, detail := range watchDetails {
 				if watchMap, ok := detail.(map[string]interface{}); ok {
 					path := getString(watchMap, "path")
 					// Only show details for current watch root
@@ -146,13 +134,13 @@ func displayStatus(statusJSON string, currentDir string, jsonOutput bool) error 
 					dirCount := getFloat(watchMap, "dir_count")
 					ignoreCount := getFloat(watchMap, "ignore_count")
 
-					fmt.Printf("%d. %s\n", i+1, path)
-					fmt.Printf("   Directories: %.0f\n", dirCount)
-					fmt.Printf("   Ignore Patterns: %.0f\n", ignoreCount)
+					fmt.Printf("Path: %s\n", path)
+					fmt.Printf("Directories: %.0f\n", dirCount)
+					fmt.Printf("Ignore Patterns: %.0f\n", ignoreCount)
 
-					// Show some watch directories if available
+					// Show all watch directories
 					if watchDirs, ok := watchMap["watch_dirs"].([]interface{}); ok && len(watchDirs) > 0 {
-						fmt.Printf("   Sample Dirs: ")
+						fmt.Printf("Watched Dirs: ")
 						count := 0
 						for _, dir := range watchDirs {
 							if dirStr, ok := dir.(string); ok {
@@ -172,12 +160,6 @@ func displayStatus(statusJSON string, currentDir string, jsonOutput bool) error 
 									fmt.Print(dirStr)
 								}
 								count++
-								if count >= 3 { // Limit to first 3 directories
-									if len(watchDirs) > 3 {
-										fmt.Printf(" (and %d more)", len(watchDirs)-3)
-									}
-									break
-								}
 							}
 						}
 						fmt.Println()
