@@ -41,6 +41,7 @@ Examples:
 }
 
 var versionFlag int
+var tagFlag string
 var csvFlag bool
 var jsonFlag bool
 var rollbackConfirmFlag bool
@@ -49,6 +50,7 @@ func init() {
 	rootCmd.AddCommand(rollbackCmd)
 
 	rollbackCmd.Flags().IntVarP(&versionFlag, "version", "v", 0, "Version to rollback to")
+	rollbackCmd.Flags().StringVarP(&tagFlag, "tag", "t", "", "Tag name to rollback to")
 	rollbackCmd.Flags().BoolVarP(&csvFlag, "csv", "c", false, "List file versions as CSV")
 	rollbackCmd.Flags().BoolVarP(&jsonFlag, "json", "j", false, "List file versions as json")
 	rollbackCmd.Flags().BoolVarP(&rollbackConfirmFlag, "confirm", "f", false, "Prompt for confirmation before rollback")
@@ -78,9 +80,19 @@ func runRollback(filePath string) error {
 	}
 	defer db.Close()
 
+	// Check for mutually exclusive flags
+	if versionFlag > 0 && tagFlag != "" {
+		return fmt.Errorf("cannot specify both --version and --tag flags")
+	}
+
 	// If version flag is set, perform rollback
 	if versionFlag > 0 {
 		return performRollback(db, absPath, versionFlag)
+	}
+
+	// If tag flag is set, perform rollback by tag
+	if tagFlag != "" {
+		return performRollbackByTag(db, absPath, tagFlag)
 	}
 
 	// Otherwise, display file versions
@@ -164,9 +176,36 @@ func displayAsTable(versions []*database.FileVersion, filePath string) error {
 		currentSize = versions[0].FileSize // versions are ordered by version number DESC
 	}
 
+	// Get database manager to fetch tags
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	rewindRoot, err := findRewindRoot(absPath)
+	if err != nil {
+		return fmt.Errorf("not in a rewind project: %w", err)
+	}
+
+	db, err := database.NewDatabaseManager(rewindRoot)
+	if err != nil {
+		return fmt.Errorf("failed to create database manager: %w", err)
+	}
+
+	if err := db.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	// Get all tags for this file
+	allTags, err := db.GetAllTagsForFile(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to get tags: %w", err)
+	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "VERSION\tTIME\tSIZE\tSIZE DIFF\tHASH")
-	fmt.Fprintln(w, "-------\t----\t----\t---------\t----")
+	fmt.Fprintln(w, "VERSION\tTIME\tSIZE\tSIZE DIFF\tHASH\tTAGS")
+	fmt.Fprintln(w, "-------\t----\t----\t---------\t----\t----")
 
 	for _, version := range versions {
 		// Format time as relative
@@ -194,12 +233,25 @@ func displayAsTable(versions []*database.FileVersion, filePath string) error {
 			hashStr = hashStr[:8] + "..."
 		}
 
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n",
+		// Format tags
+		var tagsStr string
+		if tags, exists := allTags[version.VersionNumber]; exists && len(tags) > 0 {
+			tagNames := make([]string, len(tags))
+			for i, tag := range tags {
+				tagNames[i] = tag.TagName
+			}
+			tagsStr = strings.Join(tagNames, ", ")
+		} else {
+			tagsStr = ""
+		}
+
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
 			version.VersionNumber,
 			timeStr,
 			sizeStr,
 			sizeDiffStr,
 			hashStr,
+			tagsStr,
 		)
 	}
 
@@ -508,4 +560,15 @@ func copyFile(src, dst string) error {
 	}
 
 	return nil
+}
+
+func performRollbackByTag(db *database.DatabaseManager, filePath string, tagName string) error {
+	// Get the version with the specified tag
+	targetVersion, err := db.GetVersionByTag(filePath, tagName)
+	if err != nil {
+		return err
+	}
+
+	// Delegate to regular rollback with the version number
+	return performRollback(db, filePath, targetVersion.VersionNumber)
 }

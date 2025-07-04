@@ -25,6 +25,14 @@ type FileVersion struct {
 	Deleted       bool
 }
 
+// Tag represents a version tag in the database
+type Tag struct {
+	ID        int64
+	VersionID int64
+	TagName   string
+	CreatedAt time.Time
+}
+
 // DatabaseManager handles all database operations
 type DatabaseManager struct {
 	db      *sql.DB
@@ -101,9 +109,20 @@ func (dm *DatabaseManager) createSchema() error {
 		UNIQUE(file_path, version_number)
 	);
 
+	CREATE TABLE IF NOT EXISTS tags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		version_id INTEGER NOT NULL,
+		tag_name TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY (version_id) REFERENCES versions(id),
+		UNIQUE(version_id, tag_name)
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_file_path ON versions(file_path);
 	CREATE INDEX IF NOT EXISTS idx_timestamp ON versions(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_file_hash ON versions(file_hash);
+	CREATE INDEX IF NOT EXISTS idx_tags_version_id ON tags(version_id);
+	CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(tag_name);
 	`
 
 	_, err := dm.db.Exec(query)
@@ -504,4 +523,164 @@ func (dm *DatabaseManager) RestoreFile(filePath string) (*FileVersion, error) {
 	latestVersion.Timestamp = time.Now()
 
 	return latestVersion, nil
+}
+
+// AddTag adds a tag to a specific version
+func (dm *DatabaseManager) AddTag(filePath string, versionNumber int, tagName string) error {
+	// Convert to relative path for consistent storage
+	relPath, err := filepath.Rel(dm.rootDir, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+
+	// Get the version ID for the specified file and version number
+	var versionID int64
+	query := `SELECT id FROM versions WHERE file_path = ? AND version_number = ? AND deleted = 0`
+	err = dm.db.QueryRow(query, relPath, versionNumber).Scan(&versionID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("version %d not found for file %s", versionNumber, relPath)
+		}
+		return fmt.Errorf("failed to get version ID: %w", err)
+	}
+
+	// Insert the tag
+	insertQuery := `INSERT INTO tags (version_id, tag_name, created_at) VALUES (?, ?, ?)`
+	_, err = dm.db.Exec(insertQuery, versionID, tagName, time.Now().UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return fmt.Errorf("tag '%s' already exists for version %d", tagName, versionNumber)
+		}
+		return fmt.Errorf("failed to add tag: %w", err)
+	}
+
+	return nil
+}
+
+// GetTagsForVersion returns all tags for a specific version
+func (dm *DatabaseManager) GetTagsForVersion(filePath string, versionNumber int) ([]*Tag, error) {
+	// Convert to relative path for consistent storage
+	relPath, err := filepath.Rel(dm.rootDir, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+
+	query := `
+	SELECT t.id, t.version_id, t.tag_name, t.created_at
+	FROM tags t
+	JOIN versions v ON t.version_id = v.id
+	WHERE v.file_path = ? AND v.version_number = ? AND v.deleted = 0
+	ORDER BY t.created_at ASC
+	`
+
+	rows, err := dm.db.Query(query, relPath, versionNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tags: %w", err)
+	}
+	defer rows.Close()
+
+	var tags []*Tag
+	for rows.Next() {
+		tag := &Tag{}
+		var createdAtStr string
+
+		err := rows.Scan(&tag.ID, &tag.VersionID, &tag.TagName, &createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan tag row: %w", err)
+		}
+
+		// Parse timestamp
+		tag.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse tag timestamp: %w", err)
+		}
+		tag.CreatedAt = tag.CreatedAt.Local()
+
+		tags = append(tags, tag)
+	}
+
+	return tags, nil
+}
+
+// GetVersionByTag returns a file version by tag name
+func (dm *DatabaseManager) GetVersionByTag(filePath string, tagName string) (*FileVersion, error) {
+	// Convert to relative path for consistent storage
+	relPath, err := filepath.Rel(dm.rootDir, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+
+	query := `
+	SELECT v.id, v.file_path, v.version_number, v.timestamp, v.file_hash, v.file_size, v.storage_path, v.deleted
+	FROM versions v
+	JOIN tags t ON v.id = t.version_id
+	WHERE v.file_path = ? AND t.tag_name = ? AND v.deleted = 0
+	`
+
+	row := dm.db.QueryRow(query, relPath, tagName)
+
+	fv := &FileVersion{}
+	var timestampStr string
+	err = row.Scan(&fv.ID, &fv.FilePath, &fv.VersionNumber, &timestampStr, &fv.FileHash, &fv.FileSize, &fv.StoragePath, &fv.Deleted)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no version found with tag '%s' for file %s", tagName, relPath)
+		}
+		return nil, fmt.Errorf("failed to get version by tag: %w", err)
+	}
+
+	// Parse timestamp
+	fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+	fv.Timestamp = fv.Timestamp.Local()
+
+	return fv, nil
+}
+
+// GetAllTagsForFile returns all tags for all versions of a file
+func (dm *DatabaseManager) GetAllTagsForFile(filePath string) (map[int][]*Tag, error) {
+	// Convert to relative path for consistent storage
+	relPath, err := filepath.Rel(dm.rootDir, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+
+	query := `
+	SELECT v.version_number, t.id, t.version_id, t.tag_name, t.created_at
+	FROM tags t
+	JOIN versions v ON t.version_id = v.id
+	WHERE v.file_path = ? AND v.deleted = 0
+	ORDER BY v.version_number, t.created_at ASC
+	`
+
+	rows, err := dm.db.Query(query, relPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query file tags: %w", err)
+	}
+	defer rows.Close()
+
+	tagsByVersion := make(map[int][]*Tag)
+	for rows.Next() {
+		var versionNumber int
+		tag := &Tag{}
+		var createdAtStr string
+
+		err := rows.Scan(&versionNumber, &tag.ID, &tag.VersionID, &tag.TagName, &createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan tag row: %w", err)
+		}
+
+		// Parse timestamp
+		tag.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse tag timestamp: %w", err)
+		}
+		tag.CreatedAt = tag.CreatedAt.Local()
+
+		tagsByVersion[versionNumber] = append(tagsByVersion[versionNumber], tag)
+	}
+
+	return tagsByVersion, nil
 }

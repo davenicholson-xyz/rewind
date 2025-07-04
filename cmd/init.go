@@ -99,6 +99,7 @@ Examples:
 			os.Exit(1)
 		} else {
 			app.Logger.Info("Successfully notified rewind daemon")
+			fmt.Printf("✓ Rewind project initialized successfully in %s\n", absTargetDir)
 		}
 
 	},
