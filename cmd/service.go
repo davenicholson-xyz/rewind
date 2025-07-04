@@ -168,11 +168,8 @@ func installSystemdService(execPath string) error {
 
 	serviceFile := filepath.Join(serviceDir, "rewind.service")
 	
-	// Check if service is currently running
-	wasRunning := false
+	// Stop the service if it's currently running before updating
 	if err := exec.Command("systemctl", "--user", "is-active", "rewind.service").Run(); err == nil {
-		wasRunning = true
-		// Stop the service before updating
 		exec.Command("systemctl", "--user", "stop", "rewind.service").Run()
 	}
 
@@ -199,15 +196,17 @@ WantedBy=default.target
 		return fmt.Errorf("failed to reload systemd: %v", err)
 	}
 
+	// Clean up any existing symlinks to handle case where service was previously installed
+	symlinkPath := filepath.Join(homeDir, ".config", "systemd", "user", "default.target.wants", "rewind.service")
+	os.Remove(symlinkPath)
+
 	if err := exec.Command("systemctl", "--user", "enable", "rewind.service").Run(); err != nil {
 		return fmt.Errorf("failed to enable service: %v", err)
 	}
 
-	// Restart the service if it was running before
-	if wasRunning {
-		if err := exec.Command("systemctl", "--user", "start", "rewind.service").Run(); err != nil {
-			return fmt.Errorf("failed to restart service: %v", err)
-		}
+	// Start the service (either restart if it was running before, or start for the first time)
+	if err := exec.Command("systemctl", "--user", "start", "rewind.service").Run(); err != nil {
+		return fmt.Errorf("failed to start service: %v", err)
 	}
 
 	return nil
