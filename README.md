@@ -38,8 +38,14 @@ Edit your files like normal. When you want to rollback to a previous version...
 # View file history
 rewind rollback src/main.js
 
+# Tag important versions
+rewind tag src/main.js "stable-release"
+
 # Rollback a file to a previous version
 rewind rollback src/main.js --version 5
+
+# Rollback to a tagged version
+rewind rollback src/main.js --tag "stable-release"
 
 # Show differences between versions
 rewind diff src/main.js --version 3
@@ -61,8 +67,13 @@ rewind diff src/main.js --version 3
 - `rewind rollback <file> --csv` - Show history as CSV
 - `rewind diff <file> [--version <n>]` - Show changes between versions
 
+### Tagging Versions
+- `rewind tag <file> <tag_name>` - Tag the latest version of a file
+- `rewind tag <file> <tag_name> --version <n>` - Tag a specific version
+
 ### Restore Operations
 - `rewind rollback <file> --version <n>` - Rollback file to specific version
+- `rewind rollback <file> --tag <tag_name>` - Rollback file to tagged version
 - `rewind rollback <file> --version <n> --confirm` - Rollback with confirmation
 - `rewind restore` - List all deleted files for restoration
 - `rewind restore <file>` - Restore specific deleted file
