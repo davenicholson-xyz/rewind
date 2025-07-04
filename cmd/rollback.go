@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/dustin/go-humanize"
 	"github.com/davenicholson-xyz/rewind/internal/database"
@@ -466,7 +467,7 @@ func saveCurrentFileAsNewVersion(db *database.DatabaseManager, filePath, rewindR
 	fileVersion := &database.FileVersion{
 		FilePath:      relPath,
 		VersionNumber: versionNumber,
-		Timestamp:     fileInfo.ModTime(),
+		Timestamp:     time.Now(),
 		FileHash:      currentHash,
 		FileSize:      fileInfo.Size(),
 		StoragePath:   storagePath,

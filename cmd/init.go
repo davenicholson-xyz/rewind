@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/davenicholson-xyz/rewind/app"
 	"github.com/davenicholson-xyz/rewind/internal/database"
+	"github.com/davenicholson-xyz/rewind/internal/watcher"
 	"github.com/spf13/cobra"
 )
 
@@ -71,6 +74,13 @@ Examples:
 		if err := initializeRewindProject(absTargetDir); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Perform initial scan of all files
+		if err := performInitialScan(absTargetDir); err != nil {
+			app.Logger.WithField("error", err).Error("Failed to perform initial scan")
+			fmt.Printf("Warning: Failed to perform initial scan: %v\n", err)
+			// Don't exit here as the project is still initialized
 		}
 
 		// Send IPC message after successful initialization
@@ -186,4 +196,131 @@ node_modules/*
 
 	ignoreFile := filepath.Join(dir, "ignore")
 	return os.WriteFile(ignoreFile, []byte(ignoreContent), 0644)
+}
+
+// performInitialScan scans all files in the target directory and adds them to the database
+func performInitialScan(targetDir string) error {
+	app.Logger.Info("Performing initial scan of all files")
+	
+	// Create a watch for the target directory
+	watch := &watcher.Watch{
+		Path:   targetDir,
+		Active: true,
+	}
+	
+	// Load ignore patterns manually
+	ignorePatterns, err := loadIgnorePatterns(targetDir)
+	if err != nil {
+		return fmt.Errorf("failed to load ignore patterns: %w", err)
+	}
+	watch.IgnorePatterns = ignorePatterns
+	
+	// Discover watch directories manually
+	watchDirs, err := discoverWatchDirectories(watch)
+	if err != nil {
+		return fmt.Errorf("failed to discover watch directories: %w", err)
+	}
+	watch.WatchDirs = watchDirs
+	
+	// Create a temporary watch list with just this prepared watch
+	tempWatchList := &watcher.WatchList{
+		Watches: []*watcher.Watch{watch},
+	}
+	
+	// Create a watch manager
+	watchManager, err := watcher.NewWatchManager(tempWatchList)
+	if err != nil {
+		return fmt.Errorf("failed to create watch manager: %w", err)
+	}
+	
+	// Perform the initial scan
+	if err := watchManager.PerformInitialScan(); err != nil {
+		return fmt.Errorf("failed to perform initial scan: %w", err)
+	}
+	
+	app.Logger.Info("Initial scan completed successfully")
+	return nil
+}
+
+// loadIgnorePatterns loads ignore patterns from .rewind/ignore and .rwignore files
+func loadIgnorePatterns(rootDir string) ([]string, error) {
+	app.Logger.WithField("rootDir", rootDir).Debug("Loading ignore patterns")
+	
+	patterns := []string{".rewind", ".rewind/*"}
+	
+	// Check for .rewind/ignore file
+	rewindIgnorePath := filepath.Join(rootDir, ".rewind", "ignore")
+	if rewindPatterns, err := readIgnoreFile(rewindIgnorePath); err == nil {
+		patterns = append(patterns, rewindPatterns...)
+		app.Logger.WithField("count", len(rewindPatterns)).Debug("Loaded patterns from .rewind/ignore")
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("error reading .rewind/ignore: %w", err)
+	}
+	
+	// Check for .rwignore file
+	rwIgnorePath := filepath.Join(rootDir, ".rwignore")
+	if rwPatterns, err := readIgnoreFile(rwIgnorePath); err == nil {
+		patterns = append(patterns, rwPatterns...)
+		app.Logger.WithField("count", len(rwPatterns)).Debug("Loaded patterns from .rwignore")
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("error reading .rwignore: %w", err)
+	}
+	
+	app.Logger.WithField("totalCount", len(patterns)).Info("Ignore patterns loaded")
+	return patterns, nil
+}
+
+// readIgnoreFile reads patterns from an ignore file
+func readIgnoreFile(filePath string) ([]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	
+	var patterns []string
+	scanner := bufio.NewScanner(file)
+	
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			patterns = append(patterns, line)
+		}
+	}
+	
+	return patterns, scanner.Err()
+}
+
+// discoverWatchDirectories discovers all directories that should be watched
+func discoverWatchDirectories(watch *watcher.Watch) ([]string, error) {
+	app.Logger.WithField("rootDir", watch.Path).Debug("Discovering watch directories")
+	var watchDirs []string
+	
+	err := filepath.WalkDir(watch.Path, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			app.Logger.WithField("path", path).WithField("error", err).Warn("Error walking directory")
+			return nil // Continue with other directories
+		}
+		
+		if !d.IsDir() {
+			return nil
+		}
+		
+		// Use the Watch's ShouldIgnore method
+		if watch.ShouldIgnore(path) {
+			relPath, _ := filepath.Rel(watch.Path, path)
+			app.Logger.WithField("path", relPath).Debug("Ignoring directory")
+			return filepath.SkipDir
+		}
+		
+		watchDirs = append(watchDirs, path)
+		return nil
+	})
+	
+	if err != nil {
+		return nil, fmt.Errorf("error walking directory tree: %w", err)
+	}
+	
+	app.Logger.WithField("totalDirectories", len(watchDirs)).Info("Directory discovery completed")
+	return watchDirs, nil
 }

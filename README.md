@@ -2,6 +2,7 @@
 
 **Simple, automatic version control for solo developers**
 
+
 Rewind automatically saves every version of your files when they change, giving you instant access to your entire editing history. Perfect for when you need to quickly restore a file after an overzealous AI agent, a bad refactor, or just want to see what your code looked like yesterday.
 
 ## Why Rewind?
