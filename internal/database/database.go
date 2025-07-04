@@ -136,7 +136,7 @@ func (dm *DatabaseManager) AddFileVersion(fv *FileVersion) error {
 	VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 
-	_, err := dm.db.Exec(query, fv.FilePath, fv.VersionNumber, fv.Timestamp.Format("2006-01-02 15:04:05"),
+	_, err := dm.db.Exec(query, fv.FilePath, fv.VersionNumber, fv.Timestamp.UTC().Format("2006-01-02 15:04:05"),
 		fv.FileHash, fv.FileSize, fv.StoragePath, fv.Deleted)
 
 	if err != nil {
@@ -177,11 +177,15 @@ func (dm *DatabaseManager) GetLatestFileVersion(filePath string) (*FileVersion, 
 		return nil, fmt.Errorf("failed to get latest file version: %w", err)
 	}
 
-	// Parse timestamp
+	// Parse timestamp as UTC (since we stored it as UTC), then convert to local time
 	fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 	}
+	// Convert from UTC to local time for display
+	fv.Timestamp = time.Date(fv.Timestamp.Year(), fv.Timestamp.Month(), fv.Timestamp.Day(),
+		fv.Timestamp.Hour(), fv.Timestamp.Minute(), fv.Timestamp.Second(),
+		fv.Timestamp.Nanosecond(), time.UTC).Local()
 
 	return fv, nil
 }
@@ -271,11 +275,15 @@ func (dm *DatabaseManager) GetAllLatestFiles() ([]*FileVersion, error) {
 			return nil, fmt.Errorf("failed to scan file version: %w", err)
 		}
 
-		// Parse timestamp
+		// Parse timestamp as UTC (since we stored it as UTC), then convert to local time
 		fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 		}
+		// Convert from UTC to local time for display
+		fv.Timestamp = time.Date(fv.Timestamp.Year(), fv.Timestamp.Month(), fv.Timestamp.Day(),
+			fv.Timestamp.Hour(), fv.Timestamp.Minute(), fv.Timestamp.Second(),
+			fv.Timestamp.Nanosecond(), time.UTC).Local()
 
 		fileVersions = append(fileVersions, fv)
 	}
@@ -322,10 +330,15 @@ func (dm *DatabaseManager) GetFileVersions(absPath string) ([]*FileVersion, erro
 			return nil, fmt.Errorf("failed to scan file version: %w", err)
 		}
 
+		// Parse timestamp as UTC (since we stored it as UTC), then convert to local time
 		fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 		}
+		// Convert from UTC to local time for display
+		fv.Timestamp = time.Date(fv.Timestamp.Year(), fv.Timestamp.Month(), fv.Timestamp.Day(),
+			fv.Timestamp.Hour(), fv.Timestamp.Minute(), fv.Timestamp.Second(),
+			fv.Timestamp.Nanosecond(), time.UTC).Local()
 
 		fileVersions = append(fileVersions, fv)
 	}
@@ -364,11 +377,15 @@ func (dm *DatabaseManager) GetFileVersion(absPath string, version int) (*FileVer
 		return nil, fmt.Errorf("failed to get file version: %w", err)
 	}
 
-	// Parse timestamp
+	// Parse timestamp as UTC (since we stored it as UTC), then convert to local time
 	fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 	}
+	// Convert from UTC to local time for display
+	fv.Timestamp = time.Date(fv.Timestamp.Year(), fv.Timestamp.Month(), fv.Timestamp.Day(),
+		fv.Timestamp.Hour(), fv.Timestamp.Minute(), fv.Timestamp.Second(),
+		fv.Timestamp.Nanosecond(), time.UTC).Local()
 
 	return fv, nil
 
@@ -399,7 +416,7 @@ func (dm *DatabaseManager) MarkFileDeleted(filePath string) error {
 	WHERE file_path = ? AND version_number = ?
 	`
 
-	_, err = dm.db.Exec(query, time.Now().Format("2006-01-02 15:04:05"), relPath, latestVersion.VersionNumber)
+	_, err = dm.db.Exec(query, time.Now().UTC().Format("2006-01-02 15:04:05"), relPath, latestVersion.VersionNumber)
 	if err != nil {
 		return fmt.Errorf("failed to mark file as deleted: %w", err)
 	}
@@ -433,10 +450,15 @@ func (dm *DatabaseManager) GetAllDeletedFiles() ([]*FileVersion, error) {
 			return nil, fmt.Errorf("failed to scan deleted file row: %w", err)
 		}
 
+		// Parse timestamp as UTC (since we stored it as UTC), then convert to local time
 		fv.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse timestamp: %w", err)
 		}
+		// Convert from UTC to local time for display
+		fv.Timestamp = time.Date(fv.Timestamp.Year(), fv.Timestamp.Month(), fv.Timestamp.Day(),
+			fv.Timestamp.Hour(), fv.Timestamp.Minute(), fv.Timestamp.Second(),
+			fv.Timestamp.Nanosecond(), time.UTC).Local()
 
 		deletedFiles = append(deletedFiles, fv)
 	}
@@ -473,7 +495,7 @@ func (dm *DatabaseManager) RestoreFile(filePath string) (*FileVersion, error) {
 	WHERE file_path = ? AND version_number = ?
 	`
 
-	_, err = dm.db.Exec(query, time.Now().Format("2006-01-02 15:04:05"), relPath, latestVersion.VersionNumber)
+	_, err = dm.db.Exec(query, time.Now().UTC().Format("2006-01-02 15:04:05"), relPath, latestVersion.VersionNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to restore file in database: %w", err)
 	}
