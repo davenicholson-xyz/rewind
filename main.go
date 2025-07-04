@@ -8,6 +8,8 @@ import (
 	"github.com/davenicholson-xyz/rewind/cmd"
 )
 
+var version string
+
 func main() {
 
 	logConfig := app.LoggerConfigFromEnv()
@@ -17,5 +19,6 @@ func main() {
 
 	app.Logger.Info("Rewind initializing")
 
+	cmd.SetVersion(version)
 	cmd.Execute()
 }

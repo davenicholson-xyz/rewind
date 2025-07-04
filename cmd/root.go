@@ -17,6 +17,8 @@ import (
 )
 
 var cfgFile string
+var showVersionFlag bool
+var appVersion string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -28,9 +30,17 @@ examples and usage of using your application. For example:
 Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+	Run: func(cmd *cobra.Command, args []string) {
+		if showVersionFlag {
+			if appVersion == "" {
+				fmt.Println("rewind version unknown")
+			} else {
+				fmt.Printf("%s\n", appVersion)
+			}
+			return
+		}
+		cmd.Help()
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -44,6 +54,12 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	rootCmd.Flags().BoolVarP(&showVersionFlag, "version", "v", false, "Show version")
+}
+
+// SetVersion sets the application version
+func SetVersion(version string) {
+	appVersion = version
 }
 
 // initConfig reads in config file and ENV variables if set.
