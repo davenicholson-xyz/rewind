@@ -15,13 +15,17 @@ import (
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Short: "Start or stop the file watcher daemon",
+	Long: `Start the rewind file watcher daemon to monitor and automatically version files.
+The daemon runs in the background and continuously monitors files in your configured 
+watch list, creating versions when changes are detected.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+The daemon uses Unix sockets for IPC communication and supports graceful shutdown 
+via signal handling or the --stop flag.
+
+Examples:
+  rewind watch          # Start the watcher daemon
+  rewind watch --stop   # Stop the running daemon`,
 	Run: func(cmd *cobra.Command, args []string) {
 		stop, _ := cmd.Flags().GetBool("stop")
 		if stop {

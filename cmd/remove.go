@@ -14,13 +14,22 @@ import (
 // removeCmd represents the remove command
 var removeCmd = &cobra.Command{
 	Use:   "remove",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Short: "Remove a rewind project from monitoring",
+	Long: `Remove a rewind project from monitoring and delete its .rewind directory.
+This stops the daemon from monitoring the project and permanently removes all 
+version history and configuration files.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+The removal process:
+- Notifies the daemon to stop monitoring the project
+- Removes the .rewind directory and all version files
+- Requires confirmation unless --force flag is used
+
+WARNING: This action is irreversible and will permanently delete all version history.
+
+Examples:
+  rewind remove          # Remove current directory project
+  rewind remove ./path   # Remove specified directory project
+  rewind remove --force  # Remove without confirmation`,
 	Run: func(cmd *cobra.Command, args []string) {
 
 		cwd, err := os.Getwd()

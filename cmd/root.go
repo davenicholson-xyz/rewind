@@ -23,13 +23,17 @@ var appVersion string
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "rewind",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Short: "Automatic version control system for solo developers",
+	Long: `Rewind is an automatic version control system designed for solo developers.
+It provides continuous, automatic file versioning without manual commits, 
+complementing traditional Git workflows.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+Key features:
+- Automatic file monitoring and versioning
+- Content-based deduplication
+- Project-specific configuration
+- Daemon-based background operation
+- File restoration and rollback capabilities`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if showVersionFlag {
 			if appVersion == "" {

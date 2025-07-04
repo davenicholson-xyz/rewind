@@ -25,13 +25,20 @@ type Response struct {
 // initCmd represents the init command
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Short: "Initialize a new rewind project",
+	Long: `Initialize a new rewind project in the specified directory (or current directory).
+This creates a .rewind directory with necessary configuration files and database schema.
+The project is automatically added to the daemon's watch list.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+The initialization process:
+- Creates .rewind directory structure
+- Initializes SQLite database with version schema
+- Creates default ignore patterns file
+- Notifies the daemon to start monitoring
+
+Examples:
+  rewind init          # Initialize in current directory
+  rewind init ./path   # Initialize in specified directory`,
 	Run: func(cmd *cobra.Command, args []string) {
 
 		app.Logger.Info("Starting new rewind app")
