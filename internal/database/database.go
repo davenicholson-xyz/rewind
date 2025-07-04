@@ -684,3 +684,320 @@ func (dm *DatabaseManager) GetAllTagsForFile(filePath string) (map[int][]*Tag, e
 
 	return tagsByVersion, nil
 }
+
+// GetVersionsForPurge returns version IDs to be purged based on keep-last strategy
+// Excludes tagged versions and ensures at least one version remains per file
+func (dm *DatabaseManager) GetVersionsForPurge(keepLast int) ([]int64, error) {
+	if keepLast < 1 {
+		return nil, fmt.Errorf("keepLast must be at least 1")
+	}
+
+	query := `
+	SELECT v.id, v.file_path, v.version_number, v.storage_path
+	FROM versions v
+	LEFT JOIN tags t ON v.id = t.version_id
+	WHERE v.deleted = 0
+	  AND t.version_id IS NULL
+	ORDER BY v.file_path, v.version_number DESC
+	`
+
+	rows, err := dm.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query versions: %w", err)
+	}
+	defer rows.Close()
+
+	fileVersions := make(map[string][]int64)
+	versionPaths := make(map[int64]string)
+
+	for rows.Next() {
+		var id int64
+		var filePath, storagePath string
+		var versionNumber int
+
+		if err := rows.Scan(&id, &filePath, &versionNumber, &storagePath); err != nil {
+			return nil, fmt.Errorf("failed to scan version row: %w", err)
+		}
+
+		fileVersions[filePath] = append(fileVersions[filePath], id)
+		versionPaths[id] = storagePath
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	var versionsToPurge []int64
+
+	for _, versions := range fileVersions {
+		// Skip if file has fewer than or equal to keepLast versions
+		if len(versions) <= keepLast {
+			continue
+		}
+
+		// Keep first keepLast versions (they're already sorted DESC by version_number)
+		// So we purge everything after index keepLast
+		for i := keepLast; i < len(versions); i++ {
+			versionsToPurge = append(versionsToPurge, versions[i])
+		}
+	}
+
+	return versionsToPurge, nil
+}
+
+// GetVersionsForPurgeByAge returns version IDs to be purged based on age
+// Excludes tagged versions and ensures at least one version remains per file
+func (dm *DatabaseManager) GetVersionsForPurgeByAge(olderThan time.Time) ([]int64, error) {
+	query := `
+	SELECT v.id, v.file_path, v.timestamp
+	FROM versions v
+	LEFT JOIN tags t ON v.id = t.version_id
+	WHERE v.deleted = 0
+	  AND t.version_id IS NULL
+	  AND v.timestamp < ?
+	ORDER BY v.file_path, v.timestamp DESC
+	`
+
+	rows, err := dm.db.Query(query, olderThan.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query versions by age: %w", err)
+	}
+	defer rows.Close()
+
+	fileVersions := make(map[string][]int64)
+	
+	for rows.Next() {
+		var id int64
+		var filePath, timestampStr string
+
+		if err := rows.Scan(&id, &filePath, &timestampStr); err != nil {
+			return nil, fmt.Errorf("failed to scan version row: %w", err)
+		}
+
+		fileVersions[filePath] = append(fileVersions[filePath], id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	// Get total count per file to ensure we don't remove all versions
+	fileCounts := make(map[string]int)
+	countQuery := `
+	SELECT file_path, COUNT(*) as total_count
+	FROM versions
+	WHERE deleted = 0
+	GROUP BY file_path
+	`
+	
+	countRows, err := dm.db.Query(countQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query version counts: %w", err)
+	}
+	defer countRows.Close()
+
+	for countRows.Next() {
+		var filePath string
+		var count int
+		if err := countRows.Scan(&filePath, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan count row: %w", err)
+		}
+		fileCounts[filePath] = count
+	}
+
+	if err := countRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating count rows: %w", err)
+	}
+
+	var versionsToPurge []int64
+
+	for filePath, versions := range fileVersions {
+		totalCount := fileCounts[filePath]
+		
+		// Never remove all versions of a file - always keep at least 1
+		if len(versions) >= totalCount {
+			// Keep the newest version (first in DESC order)
+			versionsToPurge = append(versionsToPurge, versions[1:]...)
+		} else {
+			// Safe to remove all old versions
+			versionsToPurge = append(versionsToPurge, versions...)
+		}
+	}
+
+	return versionsToPurge, nil
+}
+
+// GetVersionsForPurgeBySize returns version IDs to be purged to keep total size under maxSize
+// Excludes tagged versions and ensures at least one version remains per file
+func (dm *DatabaseManager) GetVersionsForPurgeBySize(maxSize int64) ([]int64, error) {
+	// First get current total size
+	totalSizeQuery := `
+	SELECT COALESCE(SUM(file_size), 0) as total_size
+	FROM versions
+	WHERE deleted = 0
+	`
+	
+	var currentSize int64
+	err := dm.db.QueryRow(totalSizeQuery).Scan(&currentSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current total size: %w", err)
+	}
+	
+	// If we're already under the limit, nothing to purge
+	if currentSize <= maxSize {
+		return []int64{}, nil
+	}
+	
+	// Get all versions ordered by timestamp (oldest first), excluding tagged versions
+	query := `
+	SELECT v.id, v.file_path, v.file_size, v.timestamp
+	FROM versions v
+	LEFT JOIN tags t ON v.id = t.version_id
+	WHERE v.deleted = 0
+	  AND t.version_id IS NULL
+	ORDER BY v.timestamp ASC
+	`
+	
+	rows, err := dm.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query versions by size: %w", err)
+	}
+	defer rows.Close()
+	
+	type versionInfo struct {
+		id       int64
+		filePath string
+		size     int64
+		timestamp string
+	}
+	
+	var versions []versionInfo
+	for rows.Next() {
+		var v versionInfo
+		if err := rows.Scan(&v.id, &v.filePath, &v.size, &v.timestamp); err != nil {
+			return nil, fmt.Errorf("failed to scan version row: %w", err)
+		}
+		versions = append(versions, v)
+	}
+	
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+	
+	// Get file counts to ensure we don't remove all versions of a file
+	fileCounts := make(map[string]int)
+	countQuery := `
+	SELECT file_path, COUNT(*) as total_count
+	FROM versions
+	WHERE deleted = 0
+	GROUP BY file_path
+	`
+	
+	countRows, err := dm.db.Query(countQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query version counts: %w", err)
+	}
+	defer countRows.Close()
+	
+	for countRows.Next() {
+		var filePath string
+		var count int
+		if err := countRows.Scan(&filePath, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan count row: %w", err)
+		}
+		fileCounts[filePath] = count
+	}
+	
+	if err := countRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating count rows: %w", err)
+	}
+	
+	// Select versions to purge, starting with oldest
+	var versionsToPurge []int64
+	sizeToRemove := currentSize - maxSize
+	removedSize := int64(0)
+	filesToRemove := make(map[string]int) // Track how many versions we're removing per file
+	
+	for _, v := range versions {
+		// Check if we can remove this version without leaving the file with 0 versions
+		if filesToRemove[v.filePath]+1 >= fileCounts[v.filePath] {
+			// Skip this version as it would leave the file with no versions
+			continue
+		}
+		
+		versionsToPurge = append(versionsToPurge, v.id)
+		removedSize += v.size
+		filesToRemove[v.filePath]++
+		
+		// Stop if we've removed enough to get under the limit
+		if removedSize >= sizeToRemove {
+			break
+		}
+	}
+	
+	return versionsToPurge, nil
+}
+
+// RemoveVersions removes specified versions from both database and filesystem
+func (dm *DatabaseManager) RemoveVersions(versionIDs []int64) error {
+	if len(versionIDs) == 0 {
+		return nil
+	}
+
+	// First, get storage paths for file deletion
+	storagePaths := make(map[int64]string)
+	
+	// Build placeholders for IN clause
+	placeholders := strings.Repeat("?,", len(versionIDs)-1) + "?"
+	query := fmt.Sprintf(`
+	SELECT id, storage_path
+	FROM versions
+	WHERE id IN (%s)
+	`, placeholders)
+
+	args := make([]interface{}, len(versionIDs))
+	for i, id := range versionIDs {
+		args[i] = id
+	}
+
+	rows, err := dm.db.Query(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to query storage paths: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var storagePath string
+		if err := rows.Scan(&id, &storagePath); err != nil {
+			return fmt.Errorf("failed to scan storage path: %w", err)
+		}
+		storagePaths[id] = storagePath
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating storage paths: %w", err)
+	}
+
+	// Delete physical files
+	for _, storagePath := range storagePaths {
+		fullPath := filepath.Join(dm.rootDir, ".rewind", "versions", storagePath)
+		if err := os.Remove(fullPath); err != nil {
+			// Log error but continue - the file might already be deleted
+			fmt.Printf("Warning: failed to delete file %s: %v\n", fullPath, err)
+		}
+	}
+
+	// Delete from database
+	deleteQuery := fmt.Sprintf(`
+	DELETE FROM versions
+	WHERE id IN (%s)
+	`, placeholders)
+
+	_, err = dm.db.Exec(deleteQuery, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete versions from database: %w", err)
+	}
+
+	return nil
+}

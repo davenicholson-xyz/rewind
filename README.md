@@ -59,8 +59,8 @@ rewind diff src/main.js --version 3
 
 ### Daemon Control  
 - `rewind service start` - Start the file watching service
-- `rewind servie stop` - Start the file watching service
-- 
+- `rewind service stop` - Stop the file watching service
+
 ### File History
 - `rewind rollback <file>` - Show version history for file
 - `rewind rollback <file> --json` - Show history as JSON
@@ -79,6 +79,15 @@ rewind diff src/main.js --version 3
 - `rewind restore <file>` - Restore specific deleted file
 - `rewind restore --confirm` - Restore with confirmation prompts
 
+### Storage Management
+- `rewind purge --keep-last <n>` - Keep only the last n versions per file
+- `rewind purge --older-than <duration>` - Remove versions older than specified time (e.g., 7d, 2w, 1h)
+- `rewind purge --max-size <size>` - Remove oldest versions to keep total size under limit (e.g., 1GB, 500MB)
+- `rewind purge --dry-run` - Preview what would be removed without deleting
+- `rewind purge --force` - Skip confirmation prompt
+
+**Note:** Tagged versions are always preserved during purge operations, and at least one version per file is always kept.
+
 Customize what gets ignored by editing `.rewind/ignore` or creating `.rwignore` files in your project.
 
 ## Contributing
@@ -88,8 +97,3 @@ This project is in active development. Issues, feature requests, and PRs welcome
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-*Never lose code again. Never fear the AI agent. Code with confidence.*
-# rewind.nvim
