@@ -26,11 +26,7 @@ curl -sSL https://raw.githubusercontent.com/davenicholson-xyz/wallchemy/main/ins
 # Initialize rewind in your project
 rewind init
 
-# Start watching for changes (in another terminal)
-rewind watch
-
-# Check daemon status
-rewind status
+# Edit your files like normal. When you want to rollback to a previous version...
 
 # View file history
 rewind rollback src/main.js
