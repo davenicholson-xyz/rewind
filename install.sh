@@ -17,12 +17,7 @@ case "$ARCH" in
     *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-# Determine file extension and filename
-if [ "$OS" = "windows_nt" ]; then
-    EXT="zip"
-else
-    EXT="tar.gz"
-fi
+EXT="tar.gz"
 
 FILE="${BINARY_NAME}-${OS}-${ARCH}-${VERSION}.${EXT}"
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${FILE}"
@@ -41,7 +36,6 @@ fi
 
 chmod +x "$BINARY_NAME"
 
-# Move to /usr/local/bin
 INSTALL_PATH="/usr/local/bin/$BINARY_NAME"
 echo "Installing to $INSTALL_PATH"
 sudo mv "$BINARY_NAME" "$INSTALL_PATH"
@@ -49,3 +43,10 @@ rm $FILE
 
 echo "$BINARY_NAME installed successfully!"
 
+echo ""
+echo "Setting up rewind service..."
+if rewind service install; then
+    echo "💡 Initialize your first project with: rewind init"
+else
+    echo "⚠️  Service setup failed - you can set it up later with: rewind service install"
+fi
