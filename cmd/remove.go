@@ -64,7 +64,7 @@ Examples:
 		force, _ := cmd.Flags().GetBool("force")
 
 		if !force {
-			fmt.Printf("Are you sure you want to remove %s? form rewind? (y/N): ", absTargetDir)
+			fmt.Printf("Are you sure you want to remove %s? (y/N): ", absTargetDir)
 			reader := bufio.NewReader(os.Stdin)
 			response, err := reader.ReadString('\n')
 			if err != nil {
