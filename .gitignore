@@ -4,3 +4,4 @@ build.sh
 build
 CLAUDE.md
 .rewind
+.DS_Store
