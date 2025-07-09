@@ -22,7 +22,7 @@ Rewind automatically saves every version of your files when they change, giving 
 
 Install on linux/mac with the following script
 ```sh
-curl -sSL https://raw.githubusercontent.com/davenicholson-xyz/wallchemy/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/davenicholson-xyz/rewind/main/install.sh | bash
 ```
 
 ## Quick Start
