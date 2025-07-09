@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -26,10 +27,13 @@ var rollbackCmd = &cobra.Command{
 
 When called with just a file path, displays a table of all versions.
 When called with --version flag, rolls back the file to that version.
+When called with --time-ago flag, rolls back to the last version before the specified time.
 
 Examples:
-  rewind rollback src/main.go                    # Show all versions
-  rewind rollback src/main.go --version 3        # Rollback to version 3
+  rewind rollback src/main.go                      # Show all versions
+  rewind rollback src/main.go --version 3          # Rollback to version 3
+  rewind rollback src/main.go --time-ago 2h        # Rollback to last version before 2 hours ago
+  rewind rollback src/main.go --time-ago 30m       # Rollback to last version before 30 minutes ago
   rewind rollback src/main.go --version 3 --confirm # Rollback with confirmation prompt`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -42,6 +46,7 @@ Examples:
 
 var versionFlag int
 var tagFlag string
+var timeAgoFlag string
 var csvFlag bool
 var jsonFlag bool
 var rollbackConfirmFlag bool
@@ -51,6 +56,7 @@ func init() {
 
 	rollbackCmd.Flags().IntVarP(&versionFlag, "version", "v", 0, "Version to rollback to")
 	rollbackCmd.Flags().StringVarP(&tagFlag, "tag", "t", "", "Tag name to rollback to")
+	rollbackCmd.Flags().StringVarP(&timeAgoFlag, "time-ago", "", "", "Time ago to rollback to (e.g., 2h, 30m, 1d)")
 	rollbackCmd.Flags().BoolVarP(&csvFlag, "csv", "c", false, "List file versions as CSV")
 	rollbackCmd.Flags().BoolVarP(&jsonFlag, "json", "j", false, "List file versions as json")
 	rollbackCmd.Flags().BoolVarP(&rollbackConfirmFlag, "confirm", "f", false, "Prompt for confirmation before rollback")
@@ -81,8 +87,18 @@ func runRollback(filePath string) error {
 	defer db.Close()
 
 	// Check for mutually exclusive flags
-	if versionFlag > 0 && tagFlag != "" {
-		return fmt.Errorf("cannot specify both --version and --tag flags")
+	flagCount := 0
+	if versionFlag > 0 {
+		flagCount++
+	}
+	if tagFlag != "" {
+		flagCount++
+	}
+	if timeAgoFlag != "" {
+		flagCount++
+	}
+	if flagCount > 1 {
+		return fmt.Errorf("cannot specify multiple rollback flags (--version, --tag, --time-ago)")
 	}
 
 	// If version flag is set, perform rollback
@@ -95,8 +111,93 @@ func runRollback(filePath string) error {
 		return performRollbackByTag(db, absPath, tagFlag)
 	}
 
+	// If time-ago flag is set, perform rollback by time
+	if timeAgoFlag != "" {
+		return performRollbackByTimeAgo(db, absPath, timeAgoFlag)
+	}
+
 	// Otherwise, display file versions
 	return displayFileVersions(db, absPath)
+}
+
+// parseTimeAgo parses a time duration string like "2h", "30m", "1d" and returns a duration
+func parseTimeAgo(timeAgoStr string) (time.Duration, error) {
+	// Regular expression to match time patterns
+	re := regexp.MustCompile(`^(\d+)([smhd])$`)
+	matches := re.FindStringSubmatch(timeAgoStr)
+	
+	if len(matches) != 3 {
+		return 0, fmt.Errorf("invalid time format '%s'. Use format like '2h', '30m', '1d'", timeAgoStr)
+	}
+	
+	value, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, fmt.Errorf("invalid number in time format: %s", matches[1])
+	}
+	
+	unit := matches[2]
+	var duration time.Duration
+	
+	switch unit {
+	case "s":
+		duration = time.Duration(value) * time.Second
+	case "m":
+		duration = time.Duration(value) * time.Minute
+	case "h":
+		duration = time.Duration(value) * time.Hour
+	case "d":
+		duration = time.Duration(value) * 24 * time.Hour
+	default:
+		return 0, fmt.Errorf("invalid time unit '%s'. Use s, m, h, or d", unit)
+	}
+	
+	return duration, nil
+}
+
+// performRollbackByTimeAgo finds the last version before the specified time ago and rolls back to it
+func performRollbackByTimeAgo(db *database.DatabaseManager, filePath string, timeAgoStr string) error {
+	// Parse the time duration
+	duration, err := parseTimeAgo(timeAgoStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse time: %w", err)
+	}
+	
+	// Calculate the target time
+	targetTime := time.Now().Add(-duration)
+	
+	// Get all versions for the file
+	versions, err := db.GetFileVersions(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to get file versions: %w", err)
+	}
+	
+	if len(versions) == 0 {
+		return fmt.Errorf("no versions found for file: %s", filePath)
+	}
+	
+	// Find the last version before the target time
+	var targetVersion *database.FileVersion
+	for _, version := range versions {
+		if version.Deleted {
+			continue
+		}
+		if version.Timestamp.Before(targetTime) {
+			targetVersion = version
+			break
+		}
+	}
+	
+	if targetVersion == nil {
+		return fmt.Errorf("no version found before %s ago (%s)", timeAgoStr, targetTime.Format("2006-01-02 15:04:05"))
+	}
+	
+	fmt.Printf("Found version %d from %s (before %s ago)\n", 
+		targetVersion.VersionNumber, 
+		humanize.Time(targetVersion.Timestamp), 
+		timeAgoStr)
+	
+	// Delegate to regular rollback with the version number
+	return performRollback(db, filePath, targetVersion.VersionNumber)
 }
 
 func findRewindRoot(startPath string) (string, error) {
