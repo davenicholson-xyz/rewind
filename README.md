@@ -47,6 +47,9 @@ rewind rollback src/main.js --version 5
 # Rollback to a tagged version
 rewind rollback src/main.js --tag "stable-release"
 
+# Rollback to a previous version by time
+rewind rollback src/main.js --time-ago 2h
+
 # Show differences between versions
 rewind diff src/main.js --version 3
 ```
@@ -74,6 +77,7 @@ rewind diff src/main.js --version 3
 ### Restore Operations
 - `rewind rollback <file> --version <n>` - Rollback file to specific version
 - `rewind rollback <file> --tag <tag_name>` - Rollback file to tagged version
+- `rewind rollback <file> --time-ago <duration>` - Rollback to last version before specified time (e.g., 2h, 30m, 1d)
 - `rewind rollback <file> --version <n> --confirm` - Rollback with confirmation
 - `rewind restore` - List all deleted files for restoration
 - `rewind restore <file>` - Restore specific deleted file
