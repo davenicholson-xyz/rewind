@@ -21,23 +21,29 @@ import (
 
 // rollbackCmd represents the rollback command
 var rollbackCmd = &cobra.Command{
-	Use:   "rollback <file_path> [--version <version_number>]",
+	Use:   "rollback [file_path] [--version <version_number>]",
 	Short: "View file versions or rollback to a specific version",
 	Long: `View all versions of a file or rollback to a specific version.
 
 When called with just a file path, displays a table of all versions.
 When called with --version flag, rolls back the file to that version.
 When called with --time-ago flag, rolls back to the last version before the specified time.
+When called with --time-ago but no file path, rolls back ALL tracked files to the specified time.
 
 Examples:
   rewind rollback src/main.go                      # Show all versions
   rewind rollback src/main.go --version 3          # Rollback to version 3
   rewind rollback src/main.go --time-ago 2h        # Rollback to last version before 2 hours ago
   rewind rollback src/main.go --time-ago 30m       # Rollback to last version before 30 minutes ago
+  rewind rollback --time-ago 2h                    # Rollback ALL files to 2 hours ago
   rewind rollback src/main.go --version 3 --confirm # Rollback with confirmation prompt`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := runRollback(args[0]); err != nil {
+		var filePath string
+		if len(args) > 0 {
+			filePath = args[0]
+		}
+		if err := runRollback(filePath); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -63,6 +69,14 @@ func init() {
 }
 
 func runRollback(filePath string) error {
+	// Handle filesystem-wide rollback when no file path is provided
+	if filePath == "" {
+		if timeAgoFlag != "" {
+			return performFilesystemRollbackByTimeAgo(timeAgoFlag)
+		}
+		return fmt.Errorf("file path is required unless using --time-ago for filesystem-wide rollback")
+	}
+
 	// Get absolute path
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -152,6 +166,112 @@ func parseTimeAgo(timeAgoStr string) (time.Duration, error) {
 	}
 	
 	return duration, nil
+}
+
+// performFilesystemRollbackByTimeAgo performs rollback on all tracked files to the specified time ago
+func performFilesystemRollbackByTimeAgo(timeAgoStr string) error {
+	// Parse the time duration
+	duration, err := parseTimeAgo(timeAgoStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse time: %w", err)
+	}
+
+	// Find the rewind project root from current directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	rewindRoot, err := findRewindRoot(cwd)
+	if err != nil {
+		return fmt.Errorf("not in a rewind project: %w", err)
+	}
+
+	// Connect to database
+	db, err := database.NewDatabaseManager(rewindRoot)
+	if err != nil {
+		return fmt.Errorf("failed to create database manager: %w", err)
+	}
+
+	if err := db.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	// Calculate the target time
+	targetTime := time.Now().Add(-duration)
+
+	// Get all latest files
+	allFiles, err := db.GetAllLatestFiles()
+	if err != nil {
+		return fmt.Errorf("failed to get all files: %w", err)
+	}
+
+	if len(allFiles) == 0 {
+		fmt.Println("No tracked files found")
+		return nil
+	}
+
+	// Filter files that exist and are not deleted
+	var eligibleFiles []*database.FileVersion
+	for _, file := range allFiles {
+		if file.Deleted {
+			continue
+		}
+		
+		// Convert relative path to absolute path
+		absPath := filepath.Join(rewindRoot, file.FilePath)
+		if _, err := os.Stat(absPath); err == nil {
+			eligibleFiles = append(eligibleFiles, file)
+		}
+	}
+
+	if len(eligibleFiles) == 0 {
+		fmt.Println("No eligible files found for rollback")
+		return nil
+	}
+
+	// Show confirmation prompt for filesystem-wide operation
+	if !confirmFilesystemRollback(eligibleFiles, timeAgoStr, targetTime) {
+		fmt.Println("Rollback cancelled.")
+		return nil
+	}
+
+	// Perform rollback on each eligible file
+	successCount := 0
+	var errors []string
+
+	fmt.Printf("Rolling back %d files to %s ago...\n\n", len(eligibleFiles), timeAgoStr)
+
+	for i, file := range eligibleFiles {
+		absPath := filepath.Join(rewindRoot, file.FilePath)
+		fmt.Printf("[%d/%d] Processing %s... ", i+1, len(eligibleFiles), file.FilePath)
+
+		if err := performRollbackByTimeAgo(db, absPath, timeAgoStr); err != nil {
+			if strings.Contains(err.Error(), "no version found before") {
+				fmt.Printf("skipped (no version before %s)\n", timeAgoStr)
+			} else {
+				fmt.Printf("failed: %v\n", err)
+				errors = append(errors, fmt.Sprintf("%s: %v", file.FilePath, err))
+			}
+		} else {
+			fmt.Printf("success\n")
+			successCount++
+		}
+	}
+
+	// Print summary
+	fmt.Printf("\n✓ Filesystem rollback completed\n")
+	fmt.Printf("✓ %d files rolled back successfully\n", successCount)
+	
+	if len(errors) > 0 {
+		fmt.Printf("✗ %d files failed:\n", len(errors))
+		for _, errMsg := range errors {
+			fmt.Printf("  - %s\n", errMsg)
+		}
+	}
+
+	return nil
 }
 
 // performRollbackByTimeAgo finds the last version before the specified time ago and rolls back to it
@@ -645,6 +765,40 @@ func confirmRollback(currentVersion, targetVersion *database.FileVersion, filePa
 	fmt.Printf("  Target:  %s (modified %s)\n", 
 		humanize.Bytes(uint64(targetVersion.FileSize)), humanize.Time(targetVersion.Timestamp))
 	fmt.Printf("\nContinue? [y/N]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
+}
+
+func confirmFilesystemRollback(eligibleFiles []*database.FileVersion, timeAgoStr string, targetTime time.Time) bool {
+	fmt.Printf("⚠️  FILESYSTEM-WIDE ROLLBACK ⚠️\n")
+	fmt.Printf("This will rollback ALL %d tracked files to %s ago (%s)\n", 
+		len(eligibleFiles), timeAgoStr, targetTime.Format("2006-01-02 15:04:05"))
+	fmt.Printf("\nFiles to be rolled back:\n")
+	
+	// Show first few files and total count
+	showCount := 10
+	if len(eligibleFiles) <= showCount {
+		for _, file := range eligibleFiles {
+			fmt.Printf("  - %s\n", file.FilePath)
+		}
+	} else {
+		for i, file := range eligibleFiles[:showCount] {
+			fmt.Printf("  - %s\n", file.FilePath)
+			if i == showCount-1 {
+				fmt.Printf("  ... and %d more files\n", len(eligibleFiles)-showCount)
+			}
+		}
+	}
+	
+	fmt.Printf("\n⚠️  This operation cannot be undone! ⚠️\n")
+	fmt.Printf("Are you sure you want to continue? [y/N]: ")
 
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
