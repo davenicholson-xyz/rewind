@@ -25,7 +25,7 @@ This command will install the appropriate service file for your operating system
 - macOS: launchd plist in ~/Library/LaunchAgents/`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {
-			fmt.Println("Usage: rewind service <install|uninstall|start|stop|status>")
+			fmt.Println("Usage: rewind service <install|uninstall|start|stop|restart|status>")
 			return
 		}
 
@@ -55,13 +55,19 @@ This command will install the appropriate service file for your operating system
 				os.Exit(1)
 			}
 			fmt.Println("Service stopped successfully")
+		case "restart":
+			if err := restartService(); err != nil {
+				fmt.Printf("Error restarting service: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Service restarted successfully")
 		case "status":
 			if err := statusService(); err != nil {
 				fmt.Printf("Error checking service status: %v\n", err)
 				os.Exit(1)
 			}
 		default:
-			fmt.Println("Usage: rewind service <install|uninstall|start|stop|status>")
+			fmt.Println("Usage: rewind service <install|uninstall|start|stop|restart|status>")
 		}
 	},
 }
@@ -141,6 +147,16 @@ func stopService() error {
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
+}
+
+func restartService() error {
+	if err := stopService(); err != nil {
+		return fmt.Errorf("failed to stop service: %v", err)
+	}
+	if err := startService(); err != nil {
+		return fmt.Errorf("failed to start service: %v", err)
+	}
+	return nil
 }
 
 func statusService() error {
